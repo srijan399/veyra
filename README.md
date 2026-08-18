@@ -26,19 +26,22 @@ There is no fast path from "here is the business process in plain English" to "h
 
 ## The Solution
 
-Veyra is a workflow generation and orchestration layer on top of CALL-E. A business user describes their desired call process in natural language. The platform generates a structured, editable conversation workflow (nodes, branching logic, qualification scoring, data capture) and compiles it into a CALL-E native agent configuration. A developer can then refine the generated workflow, connect it to a contact list or CRM, and launch it as a live campaign that CALL-E executes over real phone calls, returning structured, usable results.
+Veyra is a workflow generation and orchestration layer on top of CALL-E. A business user describes their desired call process in natural language. The platform generates a structured, editable conversation workflow (nodes, branching logic, qualification scoring, data capture) and compiles it into a Calls API task and result schema. A developer can then refine the generated workflow, connect it to a contact list or CRM, and launch it as a live campaign that CALL-E executes over real phone calls, returning structured, usable results.
+
+The workflow graph is Veyra's own authoring and editing abstraction. CALL-E does not execute an external branching graph, it runs one adaptive conversation from a single task instruction and extracts structured data at the end of the call, so the graph is flattened at compile time into a natural-language task plus a result schema.
 
 ## System Architecture
 
 ```mermaid
 flowchart TD
 A["User<br/>(natural-language prompt)"] --> B["Workflow Generator<br/>goal, info needed, flow, logic, schema"]
-B --> C["Generated Workflow<br/>(editable)"]
+B --> C["Generated Workflow<br/>(editable graph)"]
 C --> D["Campaign Builder<br/>workflow + contacts + schedule"]
-D --> E["CALL-E Integration<br/>SDK / API / MCP"]
-E --> F["Real phone calls"]
-F --> G["Workflow-driven Agent<br/>ask, listen, branch, qualify"]
-G --> H["Structured Results<br/>status, transcript, CRM/webhook"]
+D --> E["Compiler<br/>flatten graph to Calls API task + result schema"]
+E --> F["Calls API Request<br/>one per contact, personalized task"]
+F --> G["Real phone calls"]
+G --> H["Adaptive Agent<br/>one conversation from the task instruction"]
+H --> I["Structured Results<br/>webhook to Supabase, CRM/webhook out"]
 ```
 
 ## Example Generated Workflow (Wealth Management Lead Qualification)
@@ -80,6 +83,33 @@ Generated workflow summary shown to the user:
 | Conversion         | Offer advisor consultation       |
 | Completion         | Capture outcome                  |
 
+### What this compiles into
+
+The graph above is not sent to CALL-E. At compile time it is flattened into a single Calls API request, one per contact:
+
+```jsonc
+{
+  "task": "You are Ava calling on behalf of Northbridge Wealth. Introduce yourself as an AI assistant and reference the wealth management information Marta Reyes requested. Ask permission to continue; if they decline, offer to send information by email and end politely. If they agree, ask about their financial goal (retirement, wealth growth, tax planning, education, other), then their investment horizon, then their risk tolerance. Answer basic questions about the service, but never give financial advice. If they qualify, offer to book an advisor consultation. If they are not ready, offer to send information.",
+  "result_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["qualified", "primary_goal"],
+    "properties": {
+      "qualified": { "type": "boolean", "description": "Met the advisor threshold" },
+      "primary_goal": { "type": "string", "enum": ["retirement", "wealth_growth", "tax_planning", "education", "other"] },
+      "horizon_years": { "type": "number" },
+      "risk_profile": { "type": "string", "enum": ["cautious", "balanced", "growth"] },
+      "slot_booked": { "type": "boolean" },
+      "next_step": { "type": "string", "enum": ["book_advisor", "send_info", "retry", "do_not_contact"] }
+    }
+  },
+  "metadata": { "campaignId": "c_2f91", "contactId": "ct_88a3" },
+  "webhook_url": "https://veyra.app/api/calle/webhook"
+}
+```
+
+Sent with header `Idempotency-Key: veyra_c_2f91_ct_88a3`, so a retry after a timeout can never place a second real phone call.
+
 The key product moment: a developer can then say "add a question about approximate investable assets after risk tolerance," and the platform updates the workflow accordingly, without hand editing prompts or state machines. This is the strongest demonstration of the platform being a real devtool rather than a wrapper.
 
 ## Two Users, One Platform
@@ -95,7 +125,8 @@ flowchart TD
     BU1 --> WG[Workflow Generator]
     DEV1 --> WG
 
-    WG --> CE[CALL-E]
+    WG --> CO["Compiler<br/>Calls API task + result schema"]
+    CO --> CE["CALL-E Calls API"]
     CE --> RC[Real phone calls]
 ```
 
@@ -148,6 +179,16 @@ Potential monetization paths worth mentioning in the pitch, even briefly, since 
 - **Seat-based pricing for developer and business users**: teams pay per seat for workflow editing, campaign management, and analytics access.
 - **Agency / BPO tier**: a higher tier for agencies managing multiple client workflows and campaigns from one dashboard, priced on client count or campaign volume.
 - **Template marketplace**: vertical specific workflow templates (wealth management qualification, student counseling, insurance intake) that can be sold, shared, or contributed back to the CALL-E ecosystem as reusable skills or plugins.
+
+## Alignment with CALL-E Judging Criteria
+
+**Technical Implementation.** Veyra is a real CALL-E Calls API integration, not a wrapper around a demo key. Each generated workflow is compiled into a single natural-language `task` plus a `result_schema` constrained to CALL-E's supported JSON Schema subset and validated before dispatch. Campaigns dispatch one call per contact with the contact's details interpolated into that contact's task string, each carrying a stable `Idempotency-Key` of `veyra_{campaignId}_{contactId}` so a retry after a timeout cannot place a duplicate real call, and a `metadata` object of `{ campaignId, contactId }` that correlates results back to our Supabase rows. Results are captured webhook-first: the endpoint handles all three terminal event types (`call.completed`, `call.failed`, `call.result_validation_failed`), deduplicates at-least-once delivery against stored event ids before running side effects, and treats a null `structured_result` as the documented normal outcome rather than an error.
+
+**Creativity and Originality.** The generation layer turns a plain-English description of a calling process into an editable conversation graph with branching, qualification scoring, and a structured output schema. The graph is Veyra's authoring abstraction, flattened at compile time rather than shipped to CALL-E, which is what lets a non-technical user edit call logic visually and still get a well-formed single-task call.
+
+**Real World Impact.** The same engine generates wealth management, education, and insurance qualification workflows from different prompts, targeting teams that today either staff manual calling floors or hand-build a voice agent per campaign.
+
+**Presentation.** The demo runs the full path on camera: prompt in, workflow generated and edited, compiled to a Calls API request, a real call placed, structured result returned to the dashboard.
 
 ## Our Submission Checklist
 

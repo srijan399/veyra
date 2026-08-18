@@ -1,4 +1,4 @@
-# ARCHITECTURE.md
+# TECHNICAL_ARCH.md
 
 ## Veyra: Technical Architecture and Implementation Details
 
@@ -50,8 +50,8 @@ Veyra has five logical layers:
 1. Intake layer: captures a natural language description of a calling process from the user
 2. Generation layer: converts that description into a structured, machine readable workflow schema using the Claude API
 3. Visualization/editing layer: renders the workflow schema as an interactive graph (React Flow) that a developer can inspect and modify
-4. Compilation layer: translates the internal workflow schema into a CALL-E native agent configuration
-5. Execution and results layer: launches campaigns through CALL-E, receives structured call outcomes, and persists/displays them
+4. Compilation layer: flattens the internal workflow graph into a single CALL-E Calls API request (a natural-language `task` plus a `result_schema`)
+5. Execution and results layer: dispatches one call per contact through CALL-E, receives structured call outcomes by webhook, and persists/displays them
 
 ```mermaid
 
@@ -59,11 +59,11 @@ flowchart TD
     A[Intake Layer natural language prompt] --> B[Generation Layer]
     B --> C[Workflow Schema stored in Supabase]
     C --> D[Visualization Editing Layer React Flow]
-    D --> E[Compilation Layer schema to CALL-E config]
-    E --> F[CALL-E Agent Config]
-    F --> G[Execution Layer CALL-E SDK API]
+    D --> E[Compilation Layer flatten graph to task and result schema]
+    E --> F[Calls API Request]
+    F --> G[Execution Layer one call per contact via calle SDK]
     G --> H[Real phone calls]
-    H --> I[Results Layer webhook polling]
+    H --> I[Results Layer CALL-E webhook]
     I --> J[Structured Results stored in Supabase]
     J --> K[Results Dashboard]
 
@@ -78,59 +78,68 @@ flowchart TD
 This is the central contract of the entire application. Every layer reads or writes this
 shape.
 
-```
-type NodeType = "statement" | "question" | "branch" | "terminal";
-```
+This shape is what `types/workflow.ts` actually declares. Keep the two in step.
 
-```
+```ts
+type NodeType = "start" | "question" | "decision" | "terminal";
+
 interface WorkflowNode {
-id: string; unique within the workflow, e.g. "n1"
-type: NodeType;
-label: string; short human readable name, e.g. "Risk Tolerance"
-purpose: string; one line description, shown in NodeTable
-prompt: string; the actual thing the voice agent says/asks at this node
-captureField?: string; if this node captures data, the field name in outcomeSchema
+  id: string;          // unique within the workflow, e.g. "n1"
+  type: NodeType;
+  label: string;       // short purpose label, e.g. "Risk Tolerance"
+  say: string;         // the prompt text the agent says at this step
+  captures: string[];  // field names this node is expected to capture
+  x: number;           // canvas position, graph coordinates
+  y: number;
 }
-```
 
-```
 interface WorkflowEdge {
-id: string;
-source: string; node id
-target: string; node id
-condition?: string; e.g. "yes", "no", "qualified", "not_ready", or undefined for a plain sequential edge
+  id: string;
+  from: string;              // node id
+  to: string;                // node id
+  condition: string | null;  // "Yes", "Qualified", ... or null for a plain sequential edge
 }
-```
-
-```
 
 interface QualificationRule {
-field: string; which captured field this rule evaluates
-operator: "equals" | "in" | "greaterThan" | "lessThan";
-value: string | number | string[];
-weight?: number; optional scoring weight if using a scored model
+  field: string;             // a field name appearing in some node's captures
+  operator: "gte" | "lte" | "eq" | "in";
+  value: string | number | string[];
+  points: number;
 }
-```
 
-```
+interface Qualification {
+  rules: QualificationRule[];
+  threshold: number;         // total score at or above which the call counts as qualified
+}
+
+// Constrained to CALL-E's supported JSON Schema subset. See section 4.
+type OutcomeFieldType = "string" | "number" | "integer" | "boolean" | "object" | "array";
+
 interface OutcomeField {
-name: string;
-type: "string" | "boolean" | "number" | "enum";
-enumValues?: string[];
+  name: string;
+  type: OutcomeFieldType;
+  description?: string;
+  enumValues?: string[];     // compiles to `enum`
+  required?: boolean;
+  items?: OutcomeField;      // simple array.items only, no tuples
+  properties?: OutcomeField[]; // nested object fields
 }
-```
 
-```
+interface OutcomeSchema {
+  fields: OutcomeField[];
+  nextStep: string[];        // permitted values of the call's next-step disposition
+}
+
 interface Workflow {
-id: string; uuid, matches Supabase row id
-goal: string; one to two sentence summary of workflow purpose
-sourcePrompt: string; the original natural language description
-nodes: WorkflowNode[];
-edges: WorkflowEdge[];
-qualificationRules: QualificationRule[];
-outcomeSchema: OutcomeField[];
-createdAt: string;
-updatedAt: string;
+  id: string;                // uuid, matches Supabase row id
+  goal: string;              // one to two sentence summary of workflow purpose
+  sourcePrompt?: string;     // the original natural language description
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+  qualification: Qualification;
+  outcomeSchema: OutcomeSchema;
+  createdAt?: string;
+  updatedAt?: string;
 }
 ```
 
@@ -138,10 +147,16 @@ updatedAt: string;
 
 - nodes and edges are deliberately generic (graph shape) rather than a rigid linear
   sequence, since real workflows branch (consent no/yes, qualification qualified/not ready).
-- captureField on a node links conversation nodes to outcomeSchema fields, this is how the
-  compiler knows what data to extract from CALL-E's structured output.
-- Keep qualificationRules simple (rule based, not ML scored) for the hackathon timeline. A
-  weighted scoring model is a stretch goal, not a requirement.
+- The graph is Veyra's own authoring and editing abstraction. It is never sent to CALL-E as
+  a graph, it is flattened at compile time into one `task` string plus a `result_schema`
+  (section 4 and section 7).
+- `captures` on a node links conversation nodes to outcomeSchema fields, this is how the
+  compiler knows what data to ask CALL-E to extract.
+- `OutcomeField` deliberately cannot express `$ref`, `oneOf`, `anyOf`, `allOf`, recursion,
+  or `additionalProperties: true`, because CALL-E rejects all of them server side. Do not
+  widen this type without reading section 4 first.
+- Keep the qualification rules simple (rule based, not ML scored) for the hackathon
+  timeline. A weighted scoring model is a stretch goal, not a requirement.
 
 ### 3.2 Campaign and Contact (types/campaign.ts)
 
@@ -156,7 +171,7 @@ metadata?: Record<string, string>; arbitrary extra fields, e.g. "source": "web f
 interface Campaign {
 id: string;
 workflowId: string;
-compiledConfigId?: string; reference to the compiled CALL-E config, once compiled
+compiledRequest?: CalleCallRequest; the flattened Calls API request, once compiled (section 4)
 name: string;
 status: "draft" | "compiled" | "launched" | "completed";
 contacts: Contact[];
@@ -168,10 +183,12 @@ interface CallResult {
 id: string;
 campaignId: string;
 contactId: string;
+calleCallId?: string; the CALL-E call id, once the call is created
 qualified: boolean | null;
-capturedData: Record<string, string | number | boolean>;
+capturedData: Record<string, string | number | boolean> | null; null when structured_result is null
 transcript?: string;
-status: "pending" | "completed" | "failed" | "no_answer";
+status: "pending" | "completed" | "failed" | "result_validation_failed";
+failureCode?: string | null;
 completedAt?: string;
 }
 ```
@@ -191,7 +208,7 @@ updated_at timestamptz default now()
 create table campaigns (
 id uuid primary key default gen_random_uuid(),
 workflow_id uuid references workflows(id),
-compiled_config jsonb, CALL-E agent config, once compiled
+compiled_request jsonb, the flattened Calls API request, once compiled
 name text not null,
 status text not null default 'draft',
 created_at timestamptz default now(),
@@ -210,17 +227,180 @@ create table call_results (
 id uuid primary key default gen_random_uuid(),
 campaign_id uuid references campaigns(id),
 contact_id uuid references contacts(id),
+calle_call_id text,
 qualified boolean,
-captured_data jsonb,
+captured_data jsonb, null is valid, see section 4 on structured_result
 transcript text,
 status text not null default 'pending',
+failure_code text,
 completed_at timestamptz
 );
 
-Rationale: storing schema and compiled_config as jsonb rather than fully normalizing
+CALL-E webhook delivery is at-least-once, so every event id is recorded before any side
+effect runs and re-deliveries are skipped on the primary key conflict.
+
+create table processed_webhook_events (
+event_id text primary key, the CALL-E-Event-Id / payload event id
+event_type text not null,
+processed_at timestamptz default now()
+);
+
+Rationale: storing schema and compiled_request as jsonb rather than fully normalizing
 nodes/edges into their own tables keeps this fast to build and query for a hackathon
 timeline. Normalize later if the project continues past the hackathon.
 ```
+
+---
+
+## 4. CALL-E Integration Contract
+
+This section is the single reference for CALL-E's real request and response shapes. Check
+here rather than re-deriving from memory or re-reading the external docs.
+
+### 4.1 Calls only, never Goals
+
+Veyra only ever creates **Calls** (`POST /v1/calls`). It never creates, reads, or manages
+**Goals**.
+
+A Goal is CALL-E's term for a persisted, reusable voice workflow. Goals can only be
+authored and published inside CALL-E's own Chat interface. The Developer API can only
+list, read, and run Goals that a human already published there, it cannot create or
+publish one. The installed SDK reflects this exactly: `client.goals` exposes `list`,
+`get`, `run`, `getRun`, `waitForResult`, and `runAndWait`, and nothing that creates.
+
+Since Veyra generates a new workflow per user prompt automatically, using Goals would
+require a manual step in CALL-E's UI for every generated workflow, which defeats the point
+of the product. The one-shot Calls API is the correct surface.
+
+### 4.2 SDK install and client setup
+
+```
+pnpm add @call-e/calle
+```
+
+Server side only, inside `lib/calle-client.ts`:
+
+```ts
+import { CalleClient } from "@call-e/calle";
+
+export const calle = new CalleClient({ apiKey: process.env.CALLE_API_KEY! });
+```
+
+Never import this module, or read `CALLE_API_KEY`, from client-side code. `CALLE_BASE_URL`
+may be passed as `baseUrl` to override the default `https://api.heycall-e.com`.
+
+Note the naming seam: the **wire API uses snake_case** (`result_schema`,
+`recipient_result_schema`, `webhook_url`) while the **TypeScript SDK uses camelCase**
+(`resultSchema`, `recipientResultSchema`, `webhookUrl`). This document uses the wire names;
+`lib/calle-client.ts` is the only place the two spellings meet.
+
+### 4.3 Request shape
+
+```jsonc
+{
+  "task": "string",                   // required
+  "recipient":  { "phones": ["+1..."] },   // single recipient
+  "recipients": [ { "phones": ["+1..."] } ], // batch, see 4.4 for why we do not use it
+  "result_schema": { },               // call-level structured output, see 4.5
+  "recipient_result_schema": { },     // per-recipient output, only when batching
+  "metadata": { "campaignId": "...", "contactId": "..." },
+  "webhook_url": "https://.../api/calle/webhook"
+}
+```
+
+Sent with an `Idempotency-Key` request header.
+
+**`task`** is a coherent natural-language instruction rendered from the workflow's nodes
+and edges, e.g. "Introduce yourself and the company. Ask permission to continue. If yes,
+ask about financial goal (retirement, wealth growth, tax planning, education, other), then
+investment horizon, then risk tolerance. If qualified, offer to book an advisor
+consultation. If not ready, offer to send information." CALL-E does not execute an
+external branching graph, it runs one adaptive conversation from this single instruction
+and extracts structured data afterward, at the end of the call.
+
+### 4.4 Why Veyra does not use `recipients`
+
+The batch `recipients` array sends the **exact same task text** to multiple phone numbers
+at once. It has no per-recipient variable substitution. Veyra's qualification calls are
+personalized per contact, so the correct pattern is **one Calls API request per contact**,
+with that contact's name and relevant metadata interpolated directly into their own `task`
+string. See section 8.2.
+
+`recipient_result_schema` is therefore unused today. It only becomes relevant if a future
+feature batches genuinely identical-task calls.
+
+### 4.5 Result schema constraints
+
+CALL-E validates `result_schema` and `recipient_result_schema` server side against a
+**subset** of JSON Schema. Anything outside the subset is rejected, or silently nulls out
+the result.
+
+Supported:
+
+- `type` of `object`, `string`, `number`, `integer`, `boolean`, or `array`
+- `properties`, `required`, `enum`
+- nested object fields
+- simple `array.items`
+- `description`
+- `additionalProperties: false`
+
+Not supported, will be rejected:
+
+- `$ref`
+- `oneOf`, `anyOf`, `allOf`
+- recursive schemas
+- `additionalProperties: true`
+
+`lib/validation.ts` enforces this before any request reaches CALL-E. Catching it at
+compile time rather than at demo time is the whole point.
+
+**Reserved recipient field names.** If `recipient_result_schema` is ever used, avoid
+CALL-E's reserved recipient field names: `summary`, `status`, `transcript`, `call_id`, and
+any timing-related field name (`started_at`, `completed_at`, `duration`, and similar).
+This constraint is noted in `types/workflow.ts` next to `OutcomeField` so it is not
+rediscovered the hard way.
+
+### 4.6 Idempotency
+
+Every call creation sends a stable `Idempotency-Key` derived from a durable business
+identifier:
+
+```
+veyra_{campaignId}_{contactId}
+```
+
+Never a randomly generated UUID. This key is what lets a retry after a timeout safely
+avoid placing a **duplicate real phone call**, and a fresh random key on every retry
+defeats that entirely.
+
+### 4.7 Metadata
+
+Every call creation sends at minimum:
+
+```jsonc
+{ "campaignId": "...", "contactId": "..." }
+```
+
+This is the only mechanism that correlates an incoming webhook event back to the right
+Supabase campaign and contact rows. CALL-E's terminal payload carries no other reference
+to our internal ids.
+
+### 4.8 Webhook contract
+
+- `webhook_url` is set per call creation, pointing at `app/api/calle/webhook/route.ts`.
+- Three terminal event types: `call.completed`, `call.failed`,
+  `call.result_validation_failed`.
+- **No signature, no secret.** CALL-E webhook deliveries are unsigned (the SDK's
+  `webhooks.verify` / `webhooks.unwrap` helpers are deprecated and apply only to legacy
+  signed deliveries). Validate the `CALL-E-Event-Id` header against the event id in the
+  payload body, and otherwise treat this route as a public, untrusted-input boundary:
+  validate everything, trust nothing, never echo payload content into a privileged path.
+- **Delivery is at-least-once.** Store processed event ids in
+  `processed_webhook_events` and skip any event id already present **before** running side
+  effects, not after.
+- **`structured_result: null` is a normal outcome**, documented by CALL-E for when it
+  cannot extract a schema-valid result from the call. The UI and the Supabase write path
+  must both treat it as an expected state, never as an error to crash on.
 
 ---
 
@@ -229,7 +409,7 @@ timeline. Normalize later if the project continues past the hackathon.
 ### 5.1 Responsibility
 
 Takes a natural language prompt and returns a Workflow object matching the schema in
-section 4.1.
+section 3.1.
 
 ### 5.2 Implementation Approach
 
@@ -265,6 +445,14 @@ return validateWorkflowSchema(parsed); zod validation, throws if malformed
 Use zod to define a schema mirroring the Workflow type and validate every generation
 result before it is stored or passed downstream. If validation fails, retry once with an
 error correction message appended to the prompt before surfacing an error to the user.
+
+`lib/validation.ts` also owns enforcement of CALL-E's supported JSON Schema subset
+(section 4.5). `assertCalleSchemaSubset()` runs over any compiled `result_schema` or
+`recipient_result_schema` and throws on `$ref`, `oneOf`, `anyOf`, `allOf`, an unsupported
+`type`, or `additionalProperties: true`. Nothing reaches the Calls API without passing it.
+Because the generator writes the outcome schema, it is the most likely source of an
+unsupported construct, so the generator system prompt must state the subset explicitly as
+well.
 
 ### 5.4 Handling Ambiguous Prompts
 
@@ -311,39 +499,60 @@ This avoids race conditions and is easier to demo reliably.
 
 ### 7.1 Responsibility
 
-Translate the internal Workflow schema into whatever configuration format CALL-E's
-SDK/API expects for defining an agent's conversation logic.
+Flatten the internal Workflow graph into a single CALL-E Calls API request. The compiler
+does **not** translate nodes and edges into a state machine config, and does not create or
+publish anything on CALL-E's side.
+
+CALL-E does not execute an external branching graph. It runs one adaptive conversation
+from a single task instruction and extracts structured data afterward, at the end of the
+call. The graph is Veyra's own authoring and editing abstraction, and it gets flattened
+here.
 
 ### 7.2 Implementation Approach
 
-This is the piece most dependent on CALL-E's actual API surface, confirm exact method
-names, config shape, and constraints against their integration guide before finalizing.
-General shape:
-
-async function compileWorkflow(workflow: Workflow): Promise<CalleAgentConfig> {
-Map each WorkflowNode -> a CALL-E conversation state/prompt
-Map each WorkflowEdge -> a CALL-E transition/branch condition
-Map qualificationRules -> CALL-E's structured output / scoring mechanism if supported,
-otherwise implement scoring logic in our own webhook handler post-call
-Map outcomeSchema -> the structured data fields CALL-E should extract/return per call
-
-const calleConfig: CalleAgentConfig = {
-shape determined by CALL-E SDK/API, fill in once confirmed
-};
-
-return calleConfig;
+```ts
+interface CalleCallRequest {
+  task: string;                          // rendered from nodes + edges
+  result_schema: object;                 // derived from Workflow.outcomeSchema
+  recipient_result_schema?: object;      // only if ever batching identical-task calls
+  metadata: { campaignId: string; contactId: string };
+  webhook_url: string;
 }
+
+function compileWorkflow(
+  workflow: Workflow,
+  context: { campaignId: string; contact: Contact },
+): CalleCallRequest {
+  // 1. Walk nodes in graph order and render each `say` as an instruction sentence.
+  // 2. Render each conditional edge as an "if ... then ..." clause, so branching survives
+  //    as natural language rather than as structure.
+  // 3. Fold the qualification rules and threshold into a plain-language qualification
+  //    instruction. Scoring itself is re-evaluated our side from the returned fields.
+  // 4. Interpolate the contact's name and metadata into the task (see 4.4).
+  // 5. Derive result_schema from workflow.outcomeSchema, then run
+  //    assertCalleSchemaSubset() over it (see 4.5).
+  // 6. Attach metadata and webhook_url.
+}
+```
+
+The rendered `task` should read as a coherent brief to a human caller, not as a serialized
+graph. A worked example lives in the README's "What this compiles into" section.
+
+The `Idempotency-Key` is **not** part of this payload, it is a request header applied at
+dispatch time in section 8.2, since it depends on the contact being dialled.
 
 ### 7.3 Testing Strategy
 
 Before testing against generated workflows, hand write one minimal workflow (2 to 3 nodes,
-one branch) and confirm it compiles and runs correctly against CALL-E. This isolates
-compiler bugs from generator bugs. Only after that passes, test full generator to compiler
-to execution end to end.
+one branch) and confirm it compiles into a valid request and runs correctly against CALL-E
+on a **single** contact. This isolates compiler bugs from generator bugs, and there is no
+cancel operation once calls are created (section 13), so a malformed task dispatched to a
+list cannot be recalled. Only after that passes, test full generator to compiler to
+execution end to end.
 
 ### 7.4 Credential Handling
 
-All CALL-E credentials live server side only (CALLE_API_KEY in .env.local), compilation
+All CALL-E credentials live server side only (`CALLE_API_KEY` in .env.local), compilation
 happens exclusively in the POST /api/workflows/[id]/compile API route, never client side.
 
 ---
@@ -357,40 +566,94 @@ structured results as calls complete.
 
 ### 8.2 Launch Flow (app/api/campaigns/[id]/launch/route.ts)
 
+**One Calls API request per contact**, each with that contact's details interpolated into
+their own task string. Not CALL-E's batch `recipients` array, which sends identical text to
+every number with no per-recipient substitution (section 4.4).
+
+```ts
 async function launchCampaign(campaignId: string) {
-const campaign = await getCampaign(campaignId);
-const config = campaign.compiledConfig;
+  const campaign = await getCampaign(campaignId);
+  const workflow = await getWorkflow(campaign.workflowId);
 
-for (const contact of campaign.contacts) {
-await calleClient.placeCall({
-agentConfig: config,
-phoneNumber: contact.phoneNumber,
-metadata: { campaignId, contactId: contact.id },
-});
+  for (const contact of campaign.contacts) {
+    const request = compileWorkflow(workflow, { campaignId, contact });
+
+    await calle.calls.create(
+      {
+        task: request.task,                       // personalized for this contact
+        recipient: { phones: [contact.phoneNumber] },
+        resultSchema: request.result_schema,
+        metadata: { campaignId, contactId: contact.id },
+        webhookUrl: `${process.env.APP_URL}/api/calle/webhook`,
+      },
+      { idempotencyKey: `veyra_${campaignId}_${contact.id}` },
+    );
+  }
+
+  await updateCampaignStatus(campaignId, "launched");
 }
+```
 
-await updateCampaignStatus(campaignId, "launched");
+Three things are mandatory on every iteration, and all three are easy to drop:
+
+1. `idempotencyKey` of `veyra_{campaignId}_{contactId}`, stable across retries (section 4.6)
+2. `metadata` carrying `campaignId` and `contactId` (section 4.7)
+3. `webhookUrl` (section 4.8)
+
+**Optional enhancement, not MVP:** CALL-E documents a wave-based dispatch pattern for
+workflows that only need a target number of confirmations rather than calling every
+contact. Worth a mention in the Campaign Builder UI if time allows, but do not build it
+for the hackathon, and note that the lack of a cancel operation makes small waves a
+sensible safety habit regardless (section 13).
+
+### 8.3 Results Capture (app/api/calle/webhook/route.ts)
+
+**Webhooks. Confirmed, not a choice.** The earlier "webhook vs polling" question is
+settled: CALL-E posts terminal events to the `webhook_url` set on each call creation. Full
+contract in section 4.8.
+
+Handler order matters:
+
+```ts
+export async function POST(req: NextRequest) {
+  const raw = await req.text();
+  const event = JSON.parse(raw);              // untrusted input, validate everything
+
+  // 1. Unsigned deliveries: cross-check the header against the body.
+  if (req.headers.get("CALL-E-Event-Id") !== event.id) {
+    return NextResponse.json({ error: "event id mismatch" }, { status: 400 });
+  }
+
+  // 2. At-least-once delivery: claim the event id BEFORE any side effect.
+  const claimed = await claimEventId(event.id, event.type); // insert, false on conflict
+  if (!claimed) return NextResponse.json({ ok: true });     // already processed
+
+  // 3. Three terminal event types.
+  switch (event.type) {
+    case "call.completed":
+      // structured_result may be null. That is normal, not an error.
+      await writeCallResult(event.data, { qualified: null, capturedData: null });
+      break;
+    case "call.failed":
+      await markCallFailed(event.data);
+      break;
+    case "call.result_validation_failed":
+      // CALL-E could not produce a schema-valid result; keep the transcript, flag the row.
+      await markResultValidationFailed(event.data);
+      break;
+    default:
+      return NextResponse.json({ ok: true });  // unknown type, acknowledge and ignore
+  }
+
+  return NextResponse.json({ ok: true });      // any 2xx counts as delivered
 }
+```
 
-Confirm with CALL-E's docs whether calls are placed individually per contact or as a
-batch/swarm operation, and whether there is a rate limit to respect given the free tier
-call budget (20 calls).
+The campaign and contact rows are matched through `event.data.metadata.campaignId` and
+`.contactId`, which is the only correlation mechanism available (section 4.7).
 
-### 8.3 Results Capture
-
-Two possible mechanisms, confirm which CALL-E supports and document the final choice here:
-
-Option A: Webhook (preferred if supported)
-app/api/calle/webhook/route.ts receives a POST from CALL-E when a call completes,
-containing the structured output. Parse it, match it to the corresponding
-campaignId/contactId via the metadata passed at launch time, and write a CallResult row to
-Supabase.
-
-Option B: Polling
-If no webhook is available, poll CALL-E's call status endpoint on an interval (e.g. every
-10 to 15 seconds) for calls in a "pending" state, and update CallResult rows as statuses
-change. Only use this if webhooks are not available, since it is less reliable and burns
-more API calls.
+`structured_result: null` must flow through to Supabase as a null `captured_data` and
+render in the dashboard as "no result extracted", never as a crash or a blank error state.
 
 ### 8.4 Budget Management
 
@@ -412,6 +675,10 @@ Pull data from GET /api/campaigns/[id]/results, which reads call_results rows fo
 campaign from Supabase. No pagination or filtering needed for the hackathon scope, a flat
 table is sufficient.
 
+Render a null `captured_data` as an explicit "no result extracted" state, and a
+`result_validation_failed` status as its own row state. Both are normal, documented CALL-E
+outcomes (section 4.8), and the dashboard is on camera during the demo.
+
 ---
 
 ## 10. API Route Summary
@@ -419,11 +686,11 @@ table is sufficient.
 /api/workflows/generate POST prompt -> generated Workflow, stores in Supabase
 /api/workflows/[id] GET fetch a workflow by id
 /api/workflows/[id] PATCH update a workflow (from the editor)
-/api/workflows/[id]/compile POST Workflow -> CalleAgentConfig, stores in campaign
+/api/workflows/[id]/compile POST Workflow -> Calls API request (task + result_schema), stores in campaign
 /api/campaigns POST create a campaign from a compiled workflow + contacts
-/api/campaigns/[id]/launch POST trigger CALL-E calls for all contacts in campaign
+/api/campaigns/[id]/launch POST create one idempotent CALL-E call per contact in the campaign
 /api/campaigns/[id]/results GET fetch structured call results for a campaign
-/api/calle/webhook POST receive call outcome callbacks from CALL-E
+/api/calle/webhook POST receive terminal call events from CALL-E (public, unsigned, deduplicated)
 
 ---
 
@@ -431,41 +698,63 @@ table is sufficient.
 
 ANTHROPIC_API_KEY=
 CALLE_API_KEY=
+CALLE_BASE_URL=          # optional, defaults to https://api.heycall-e.com
+APP_URL=                 # public base URL used to build webhook_url
 NEXT_PUBLIC_SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 
-.env.local is gitignored. Both teammates need their own copy locally, share values through
-a secure channel, not through the repo or chat history.
+`.env.example` is committed and lists every variable with no values. Copy it:
+
+```
+cp .env.example .env.local
+```
+
+`.env.local` is gitignored (`.gitignore` negates `.env*` for `.env.example` only). Both
+teammates need their own copy locally, share values through a secure channel, not through
+the repo or chat history. Any new variable goes into `.env.example` in the same commit
+that introduces it.
 
 ---
 
 ## 12. Build Order (maps to roadmap phases)
 
 1. Scaffold Next.js + pnpm + Tailwind + Supabase connection
-2. Define and lock types/workflow.ts (section 4.1), write 2 to 3 hand written example
+2. Define and lock types/workflow.ts (section 3.1), write 2 to 3 hand written example
    workflows to validate the schema before automating generation
 3. Build generation layer, test against hand written examples for consistency
 4. Build visualization/editing layer against generator output
-5. Build compilation layer, test against one hand written minimal workflow first
-6. Build campaign builder and launch flow
-7. Build results capture (webhook or polling) and dashboard
+5. Build compilation layer (graph -> task + result_schema), test against one hand written minimal workflow and a single contact first
+6. Build campaign builder and launch flow (one idempotent call per contact)
+7. Build webhook results capture, with event deduplication, and the dashboard
 8. Run a second vertical prompt through the full pipeline to prove generality
 9. Polish, record demo, submit
+
+---
+
+## 13. Known Risks
+
+| Risk | Impact | Mitigation |
+| ---- | ------ | ---------- |
+| No cancel operation exists once a call is created. A bad or malformed task dispatched to many contacts cannot be aborted mid-flight. | High. Burns limited call credits and places real, wrong phone calls that cannot be recalled. | Test every task change against a single contact first. Dispatch in small waves rather than the full contact list at once, especially before the final demo recording. |
+| `structured_result` can be null when CALL-E cannot extract a schema-valid answer from the call. | Medium. Crashes or blank states in the results dashboard, on camera. | Treat null as a normal, expected state in both the Supabase write path and the UI. Render it as "no result extracted". Covered in sections 4.8, 8.3 and 9. |
+| 20 free call credits per account, and real calls cost credits to test. | Medium. Running out mid-build, or during the demo recording. | Mock CALL-E responses during UI work. Reserve 3 to 5 real calls for the recording. Request more credits early (section 8.4). |
+| The generator can emit an outcome schema using unsupported JSON Schema features. | Medium. CALL-E rejects the request, or silently nulls the result, and it surfaces at demo time. | State the supported subset explicitly in the generator system prompt, and enforce it in `lib/validation.ts` before dispatch (sections 4.5, 5.3). |
 
 ---
 
 ## Architecture Reference
 
 Full technical architecture, data models, API contracts, and build order live in
-ARCHITECTURE.md. Read it before implementing or modifying:
+TECHNICAL_ARCH.md. Read it before implementing or modifying:
 
-- the Workflow schema (types/workflow.ts) - see ARCHITECTURE.md section 4.1
+- the Workflow schema (types/workflow.ts) - see TECHNICAL_ARCH.md section 3.1
 - any generator, visualizer, or compiler code - see sections 5, 6, 7
+- anything touching CALL-E (client, compiler, launch, webhook) - see section 4
 - API routes - see section 10 for the full route summary
-- database schema - see section 4.3
+- database schema - see section 3.3
 
-If a task involves a technical decision not yet documented in ARCHITECTURE.md (e.g. a new
-CALL-E API detail, a schema field addition, a new route), update ARCHITECTURE.md as part
+If a task involves a technical decision not yet documented in TECHNICAL_ARCH.md (e.g. a new
+CALL-E API detail, a schema field addition, a new route), update TECHNICAL_ARCH.md as part
 of that task, do not leave the decision undocumented. Flag the update in your response so
 the team is aware a decision was recorded.
