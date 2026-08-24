@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
-import { Archivo } from "next/font/google";
+import { Archivo, Geist } from "next/font/google";
 import "./globals.css";
+import { cn } from "@/lib/utils";
+
+const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 const archivo = Archivo({
   variable: "--font-archivo",
@@ -16,7 +19,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${archivo.variable} h-full antialiased`}>
+    <html lang="en" className={cn("h-full", "antialiased", archivo.variable, "font-sans", geist.variable)}>
       <body className="min-h-full flex flex-col font-sans">{children}</body>
     </html>
   );
