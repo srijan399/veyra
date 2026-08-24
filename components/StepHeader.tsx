@@ -1,4 +1,5 @@
 import Link from "next/link";
+import AccountIndicator from "@/components/AccountIndicator";
 
 const STEPS = [
   { id: "prompt", n: "01", label: "Prompt", href: "/" },
@@ -9,8 +10,14 @@ const STEPS = [
 
 export type StepId = (typeof STEPS)[number]["id"];
 
+/**
+ * The account screen sits outside the four-step pipeline, so it lights up the account
+ * button in the corner instead of a step, and leaves every step unhighlighted.
+ */
+export type HeaderScreen = StepId | "profile";
+
 /** Sticky pipeline nav. Steps whose screens do not exist yet stay inert. */
-export default function StepHeader({ current }: { current: StepId }) {
+export default function StepHeader({ current }: { current: HeaderScreen }) {
   const idx = STEPS.findIndex((s) => s.id === current);
 
   return (
@@ -69,15 +76,7 @@ export default function StepHeader({ current }: { current: StepId }) {
         <span className="text-[11px] uppercase tracking-[.1em] text-bone/45">
           CALL-E · Sandbox
         </span>
-        <button
-          type="button"
-          className="inline-flex cursor-pointer items-center gap-[9px] border border-bone/[.22] bg-transparent py-[5px] pl-[5px] pr-2.5 text-bone"
-        >
-          <span className="grid size-[26px] place-items-center bg-bone/[.12] text-[11px] font-extrabold">
-            MR
-          </span>
-          <span className="text-xs font-extrabold tracking-[.02em]">Workflows</span>
-        </button>
+        <AccountIndicator active={current === "profile"} />
       </div>
     </header>
   );

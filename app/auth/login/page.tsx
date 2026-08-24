@@ -1,23 +1,30 @@
-import { login } from './actions';
+import Link from 'next/link';
 
-export default function LoginPage() {
+import { login } from '../actions';
+import AuthForm from '../AuthForm';
+
+const LINK =
+  'cursor-pointer text-ember underline underline-offset-[3px]';
+
+export default async function LoginPage({ searchParams }: PageProps<'/auth/login'>) {
+  // Stamped by the middleware when it bounces an unauthenticated request, so the user
+  // lands back on the page they were actually trying to reach.
+  const { next } = await searchParams;
+
   return (
-    <main>
-      <h1>Log in</h1>
-
-      <form action={login}>
-        <div>
-          <label htmlFor="email">Email</label>
-          <input id="email" name="email" type="email" required />
-        </div>
-
-        <div>
-          <label htmlFor="password">Password</label>
-          <input id="password" name="password" type="password" required />
-        </div>
-
-        <button type="submit">Log in</button>
-      </form>
-    </main>
+    <AuthForm
+      title="Log in"
+      submitLabel="Log in"
+      action={login}
+      next={typeof next === 'string' ? next : '/'}
+      footer={
+        <>
+          Don&apos;t have an account?{' '}
+          <Link href="/auth/signup" className={LINK}>
+            Sign up
+          </Link>
+        </>
+      }
+    />
   );
 }
