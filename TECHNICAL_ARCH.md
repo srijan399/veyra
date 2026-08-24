@@ -267,6 +267,175 @@ timeline. Normalize later if the project continues past the hackathon.
 
 ---
 
+## Authentication
+
+Email and password only. No password reset, no OAuth providers, no MFA, no email
+verification — every one of those is a deliberate omission, not a gap to fill in later
+without discussing it. This section is deliberately unnumbered so sections 4 to 13 keep
+the numbers that CLAUDE.md and the rest of this document cross-reference.
+
+### Identity lives in `auth.users`, not in a table we own
+
+Supabase Auth already owns identity. Veyra does **not** create a users table. `profiles`
+extends the auth row instead:
+
+```
+create table profiles (
+id uuid primary key references auth.users(id) on delete cascade,
+full_name text,
+company_name text,
+role text not null default 'business_user',
+created_at timestamptz default now()
+);
+```
+
+Because `profiles.id` *is* the auth user id, `id = auth.uid()` is a valid ownership check
+with no join, and deleting an auth user cascades the profile away.
+
+`workflows` and `campaigns` each carry `user_id uuid not null references auth.users(id) on
+delete cascade` (section 3.3). `contacts` and `call_results` deliberately do not: their
+owner is derived through the parent campaign, so there is one source of truth rather than a
+duplicated column that can drift out of sync.
+
+The runnable source of everything below is **`supabase/schema.sql`**. It is idempotent, so
+re-running it after an edit is safe. It has to be executed by hand in the Supabase SQL
+editor — none of it takes effect until then.
+
+### Profile creation trigger
+
+The signup form passes `full_name` and `company_name` through
+`supabase.auth.signUp({ options: { data } })`, which lands in
+`auth.users.raw_user_meta_data`. An `after insert on auth.users` trigger copies them into
+`profiles`, so the app never needs a second round trip after signup:
+
+```
+create function public.handle_new_user() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  insert into public.profiles (id, full_name, company_name)
+  values (new.id,
+          nullif(trim(new.raw_user_meta_data ->> 'full_name'), ''),
+          nullif(trim(new.raw_user_meta_data ->> 'company_name'), ''))
+  on conflict (id) do nothing;
+  return new;
+end; $$;
+
+create trigger on_auth_user_created after insert on auth.users
+for each row execute function public.handle_new_user();
+```
+
+Two things about the shape of this function are load-bearing:
+
+- **`role` is not read from metadata.** `raw_user_meta_data` is user-editable — a client
+  can update it at any time — so anything read from it is effectively self-assigned. `role`
+  takes the column default `'business_user'`. If Veyra ever grows real roles, they belong
+  in `raw_app_meta_data` or an admin-only write path. Never put an authorization decision
+  behind a `user_metadata` claim.
+- **`security definer` with `set search_path = ''`.** The function must write to
+  `public.profiles` as its owner, and an empty search path stops a caller-controlled schema
+  from shadowing the objects it references.
+
+### Row Level Security
+
+RLS is enabled on every table in `public`, because `public` is exposed through the Data
+API. It is the actual security boundary for user data — not the middleware, and not any
+filter in application code.
+
+- `profiles` — select, insert, update where `(select auth.uid()) = id`. No delete policy:
+  removal happens through the cascade from `auth.users`, and letting a user delete their
+  own profile while their auth user survives leaves a signed-in user with no name.
+- `workflows`, `campaigns` — all four verbs where `(select auth.uid()) = user_id`.
+- `contacts` — all four verbs, gated on `exists (select 1 from campaigns c where c.id =
+  contacts.campaign_id and c.user_id = (select auth.uid()))`.
+- `call_results` — **select only**, gated the same way through the parent campaign. Results
+  are written by the CALL-E webhook under the service role; nothing in the browser should
+  be able to forge or edit the recorded outcome of a real phone call.
+- `processed_webhook_events` — RLS on, no policies, so only the service role reaches it.
+
+Four conventions apply to every policy, and each one is a trap if ignored:
+
+1. **`to authenticated`, never `auth.role() = 'authenticated'`.** The latter is deprecated
+   and silently passes for anonymous sign-ins.
+2. **`(select auth.uid())`, not bare `auth.uid()`.** The subselect is evaluated once per
+   statement instead of once per row.
+3. **`to authenticated` alone is authentication without authorization.** It checks the
+   role, not the row. The ownership predicate in `using` is what actually scopes access.
+4. **Every UPDATE policy carries both `using` and `with check`.** Without `with check` a
+   user can reassign a row's `user_id` to somebody else. And an UPDATE has to SELECT the
+   row first, so without a matching select policy it silently affects zero rows rather than
+   erroring.
+
+Tables created from raw SQL are not necessarily exposed to the Data API, so the schema also
+grants the `authenticated` role explicitly. `anon` is granted nothing. Grants decide whether
+a table is reachable at all; RLS decides which rows come back.
+
+### Route protection
+
+Next.js 16 renamed middleware to **`proxy.ts`**, which calls `updateSession` in
+`lib/supabase/middleware.ts` — the `@supabase/ssr` pattern, unchanged apart from the guard.
+`PROTECTED_PREFIXES` covers `/workflow`, `/campaign`, `/profile`, their plural forms, and
+`/api/workflows`, `/api/campaigns`.
+
+- Unauthenticated page request → redirect to `/auth/login?next=<original path>`, so login
+  returns the user where they were going. The `next` value is validated before use: only a
+  path starting with a single `/` is accepted, otherwise `//evil.com` turns login into an
+  open redirect.
+- Unauthenticated `/api/` request → `401 JSON`, because redirecting `fetch()` to an HTML
+  login page yields a 200 full of markup rather than a status the caller can branch on.
+- Authenticated user on `/auth/login` or `/auth/signup` → redirect to `/`.
+
+**The middleware is a UX guard, not the security boundary.** It stops signed-out users
+landing on empty screens. RLS is what makes data inaccessible, and it holds for requests
+that never pass through the proxy at all.
+
+Do not move the `getClaims()` call or the `supabaseResponse` return in that file, and do
+not insert code between the client construction and `getClaims()` — doing so causes users to
+be logged out at random, and it is very hard to debug after the fact.
+
+### Application surface
+
+| Path | Purpose |
+| ---- | ------- |
+| `supabase/schema.sql` | Tables, trigger, RLS policies, grants. Run by hand. |
+| `lib/supabase/auth.ts` | `getSessionUser()` for server components; `requireUser()` for API routes. |
+| `app/auth/actions.ts` | `login`, `signup`, `logout` server actions. |
+| `app/auth/AuthForm.tsx` | Shared login/signup form shell. |
+| `components/UserProvider.tsx` | `useUser()` context, plus `initialsFor()`. |
+| `components/AccountIndicator.tsx` | Header account tile and log-out control. |
+| `app/profile/page.tsx` | Account screen. Identity is real; the workflow cards are still sample data. |
+
+`getSessionUser()` uses `supabase.auth.getUser()`, not `getSession()` — getSession reads the
+cookie without verifying it and can be spoofed. The root layout resolves the user once and
+passes it into `UserProvider`, so client components read it from context with no fetch and
+no logged-out flash; the auth actions call `revalidatePath('/', 'layout')` to refresh it.
+
+**The contract for API routes that touch user-owned data** (see also section 10):
+
+```ts
+const auth = await requireUser();
+if (!auth.ok) return auth.response;
+const { supabase, user } = auth;
+```
+
+- The client returned is the **user-scoped** one, so RLS enforces ownership on select,
+  update and delete. An explicit `.eq('user_id', user.id)` is fine as defense in depth, but
+  it is not what is doing the work.
+- **Inserts must set `user_id: user.id` explicitly.** The insert policy checks that column,
+  it does not populate it, so an insert without it fails the `with check`.
+- Never substitute the service role client to make a query work. It bypasses RLS entirely
+  and turns the route into a cross-tenant leak. The one legitimate service-role caller is
+  the CALL-E webhook, which has no user session to work from.
+
+### Project settings (manual, cannot be done from code)
+
+**Authentication > Providers > Email > "Confirm email" must be turned OFF.** This is a
+hackathon build demoed live: with confirmation on, `signUp` returns a user with no session
+and the signup flow dead-ends waiting on an email nobody will click on stage. The `signup`
+action detects the null session and returns an error naming this setting, so the failure is
+self-explaining rather than a silent bounce back to the login screen.
+
+---
+
 ## 4. CALL-E Integration Contract
 
 This section is the single reference for CALL-E's real request and response shapes. Check
@@ -707,6 +876,12 @@ outcomes (section 4.8), and the dashboard is on camera during the demo.
 /api/campaigns/[id]/results GET fetch structured call results for a campaign
 /api/calle/webhook POST receive terminal call events from CALL-E (public, unsigned, deduplicated)
 
+Every route above except the webhook requires an authenticated user and must open with
+`requireUser()` from `lib/supabase/auth.ts`. Inserts set `user_id` explicitly; reads,
+updates and deletes are scoped by RLS. The webhook is the sole exception: it has no user
+session, runs under the service role, and is a public untrusted-input boundary. See the
+Authentication section.
+
 ---
 
 ## 11. Environment Variables
@@ -716,8 +891,16 @@ CALLE_API_KEY=
 CALLE_BASE_URL=          # optional, defaults to https://api.heycall-e.com
 APP_URL=                 # public base URL used to build webhook_url
 NEXT_PUBLIC_SUPABASE_URL=
-SUPABASE_SERVICE_ROLE_KEY=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=          # bypasses RLS, webhook route only
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+
+The browser key is `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, not `..._ANON_KEY` — that is
+what `lib/supabase/{client,server,middleware}.ts` read, and it is Supabase's current name
+for the key. Legacy `anon` keys still work but are kept only for compatibility.
+
+Two Supabase settings are not environment variables and cannot be set from code: "Confirm
+email" must be OFF under Authentication > Providers > Email, and `supabase/schema.sql` must
+be run in the SQL editor. See the Authentication section.
 
 `.env.example` is committed and lists every variable with no values. Copy it:
 

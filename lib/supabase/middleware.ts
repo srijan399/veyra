@@ -1,6 +1,27 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
+/**
+ * Route prefixes that require a signed-in user. Matched on exact path or `prefix/...`, so
+ * `/workflow` and `/workflow/abc` are both covered while a hypothetical `/workflow-docs`
+ * is not. Singular and plural forms are both listed: the pages are singular today, the
+ * API routes in TECHNICAL_ARCH.md section 10 are plural, and the guard should hold either
+ * way rather than quietly stop matching after a rename.
+ *
+ * This is a UX guard, not the security boundary — it stops unauthenticated users landing
+ * on an empty screen. The real enforcement is RLS in Postgres plus `requireUser()` in
+ * lib/supabase/auth.ts, both of which hold even for a request that never passes here.
+ */
+const PROTECTED_PREFIXES = [
+  '/workflow',
+  '/workflows',
+  '/campaign',
+  '/campaigns',
+  '/profile',
+  '/api/workflows',
+  '/api/campaigns',
+] as const;
+
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
@@ -38,19 +59,34 @@ export async function updateSession(request: NextRequest) {
   const { data } = await supabase.auth.getClaims();
   const user = data?.claims;
 
-  // if (
-  //   !user &&
-  //   !request.nextUrl.pathname.startsWith('/login') &&
-  //   !request.nextUrl.pathname.startsWith('/auth') &&
-  //   // the OAuth consent route sends unauthenticated visitors to the login page
-  //   // itself, so that it can preserve the authorization in the `next` parameter
-  //   request.nextUrl.pathname !== '/oauth/consent'
-  // ) {
-  //   // no user, potentially respond by redirecting the user to the login page
-  //   const url = request.nextUrl.clone();
-  //   url.pathname = '/auth/login';
-  //   return NextResponse.redirect(url);
-  // }
+  const { pathname } = request.nextUrl;
+
+  const isProtected = PROTECTED_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+
+  if (isProtected && !user) {
+    // Redirecting an API request to an HTML login page hands fetch() a 200 full of markup
+    // instead of a status it can branch on, so answer those in kind.
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+
+    const url = request.nextUrl.clone();
+    url.pathname = '/auth/login';
+    url.search = '';
+    // So the login form can send the user back where they were actually headed.
+    url.searchParams.set('next', pathname + request.nextUrl.search);
+    return NextResponse.redirect(url);
+  }
+
+  // A signed-in user has nothing to do on the auth screens.
+  if (user && (pathname === '/auth/login' || pathname === '/auth/signup')) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/';
+    url.search = '';
+    return NextResponse.redirect(url);
+  }
 
   // IMPORTANT: You *must* return the supabaseResponse object as it is.
   // If you're creating a new response object with NextResponse.next() make sure to:

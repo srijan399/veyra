@@ -48,7 +48,11 @@ team first, we are optimizing for shipping speed, not architectural purity.
 - `lib/compiler.ts` - workflow schema to Calls API request translation
 - `lib/validation.ts` - zod validation of generated workflows, plus enforcement of
   CALL-E's supported JSON Schema subset
-- `lib/supabase.ts` - Supabase client setup
+- `lib/supabase/` - Supabase client setup: `client.ts` (browser), `server.ts` (server
+  components and route handlers), `middleware.ts` (session refresh plus route protection),
+  `auth.ts` (`getSessionUser`, `requireUser`)
+- `supabase/schema.sql` - tables, the profile trigger, and every RLS policy. Run by hand in
+  the Supabase SQL editor
 - `lib/calle-client.ts` - CALL-E SDK client wrapper
 
 ## Workflow Schema (types/workflow.ts)
@@ -79,6 +83,55 @@ the React Flow renderer (components/WorkflowGraph.tsx), and the CALL-E compiler
 - `npm run build` - production build
 - `npm run lint` - lint check
 - `npm run test` - run tests (if/when added)
+
+## Authentication and Data Scoping
+
+Email and password auth via Supabase Auth. Deliberately minimal: no password reset, no
+OAuth, no MFA, no email verification. Full detail in TECHNICAL_ARCH.md, Authentication
+section. What matters when writing code:
+
+- **Every workflow and campaign route requires an authenticated user.** Pages under
+  `/workflow`, `/campaign` and `/profile` are guarded by `proxy.ts` (Next.js 16's rename of
+  middleware). API routes under `app/api/workflows/` and `app/api/campaigns/` must open
+  with `requireUser()` from `lib/supabase/auth.ts`:
+
+  ```ts
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+  const { supabase, user } = auth;
+  ```
+
+  The only route exempt is the CALL-E webhook, which has no user session.
+
+- **`user_id` scoping is enforced by RLS in Postgres, not in application code.** The client
+  from `requireUser()` is user-scoped, so select, update and delete are already restricted
+  to the caller's rows. Adding `.eq('user_id', user.id)` as defense in depth is fine, but do
+  not mistake it for the thing doing the work.
+
+- **Inserts must set `user_id: user.id` explicitly.** The RLS insert policy checks that
+  column, it does not populate it, so an insert that omits it fails the `with check`.
+
+- **Any new table that stores user-owned data follows the same pattern, in the same
+  change**: a `user_id uuid not null references auth.users(id) on delete cascade` column (or
+  ownership derived from a parent table that has one), RLS enabled, and written-out select /
+  insert / update / delete policies in `supabase/schema.sql`. A table added without policies
+  is reachable through the Data API by anyone. Do not defer this — an unpoliced table looks
+  identical to a policed one until someone else's data shows up on screen.
+
+- **Never use the service role key to work around RLS.** It bypasses row security entirely
+  and turns the route into a cross-tenant data leak. Its one legitimate use is the CALL-E
+  webhook.
+
+- **Never put an authorization decision behind a `user_metadata` claim.** It is
+  client-editable. That is why `role` defaults to `'business_user'` in the database instead
+  of being read from the signup payload.
+
+- `supabase/schema.sql` is the source of truth for tables, the profile trigger, and every
+  policy. It is idempotent, and it has to be run by hand in the Supabase SQL editor.
+
+- Client components read the current user via `useUser()` from `components/UserProvider.tsx`
+  (resolved server side in the root layout, so no fetch and no logged-out flash). Server
+  components use `getSessionUser()` from `lib/supabase/auth.ts`.
 
 ## CALL-E Integration Details
 
@@ -167,8 +220,9 @@ Copy `.env.example` to `.env.local` and fill it in. Never commit actual values:
 - `CALLE_BASE_URL` - optional CALL-E API base URL override, defaults to
   `https://api.heycall-e.com`
 - `NEXT_PUBLIC_SUPABASE_URL` - Supabase project URL
-- `SUPABASE_SERVICE_ROLE_KEY` - Supabase server side key
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` - Supabase browser side key
+- `SUPABASE_SERVICE_ROLE_KEY` - Supabase server side key. Bypasses RLS, webhook route only
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` - Supabase browser side key. Note PUBLISHABLE, not
+  ANON, this is what `lib/supabase/*.ts` actually read
 - `APP_URL` - public base URL of this app, used to build the `webhook_url` sent on every
   call. Local development needs a tunnel for CALL-E to reach the webhook.
 
