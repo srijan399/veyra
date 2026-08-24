@@ -195,9 +195,23 @@ completedAt?: string;
 
 ### 3.3 Supabase Schema (supabase/schema.sql)
 
+`supabase/schema.sql` is the real, runnable version of everything below, including the
+profiles table, the signup trigger, and every RLS policy. Run it in the Supabase SQL
+editor; it is idempotent and safe to re-run. The Authentication section below explains the
+ownership model.
+
 ```
+create table profiles (
+id uuid primary key references auth.users(id) on delete cascade,
+full_name text,
+company_name text,
+role text not null default 'business_user',
+created_at timestamptz default now()
+);
+
 create table workflows (
 id uuid primary key default gen_random_uuid(),
+user_id uuid not null references auth.users(id) on delete cascade,
 goal text not null,
 source_prompt text not null,
 schema jsonb not null, full Workflow object (nodes, edges, rules, outcomeSchema)
@@ -207,6 +221,7 @@ updated_at timestamptz default now()
 
 create table campaigns (
 id uuid primary key default gen_random_uuid(),
+user_id uuid not null references auth.users(id) on delete cascade,
 workflow_id uuid references workflows(id),
 compiled_request jsonb, the flattened Calls API request, once compiled
 name text not null,
