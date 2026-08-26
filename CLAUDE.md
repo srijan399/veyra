@@ -112,7 +112,7 @@ All of these run from `web/`, not the repo root:
 - `npm run lint` - lint check
 - `npm run test` - run tests (if/when added)
 
-Engine (`engine/`) has its own commands, see `engine/README.md`: `uvicorn app.main:app
+Engine (`engine/`) has its own commands, see `engine/README.md`: `uvicorn main:app
 --reload --port 8008` to run it, `pytest` to test it. It must be running (or `ENGINE_URL`
 pointed at a deployed instance) for `/api/workflows/generate` and
 `/api/workflows/[id]/edit` to work.
