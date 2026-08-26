@@ -13,9 +13,7 @@ load_dotenv()
 
 class Settings:
     gemini_api_key: str | None = os.getenv("GEMINI_API_KEY")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    # Optional shared secret the Next.js app sends as `Authorization: Bearer <secret>`.
-    # Unset in local dev to skip the check entirely.
+    gemini_model: str = os.getenv("GEMINI_MODEL") or "gemini-3.6-flash"
     shared_secret: str | None = os.getenv("ENGINE_SHARED_SECRET")
 
 

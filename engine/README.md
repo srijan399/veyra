@@ -36,10 +36,16 @@ Two reasons to reach for FastAPI here instead of another Next.js API route:
 ```bash
 cd engine
 python3 -m venv .venv
-./.venv/bin/pip install -r requirements.txt
+source .venv/bin/activate
+pip install -r requirements.txt
 cp .env.example .env   # fill in GEMINI_API_KEY
-./.venv/bin/uvicorn app.main:app --reload --port 8008
+uvicorn main:app --reload --port 8008
 ```
+
+`main.py` at the top of `engine/` is a one-line re-export of the real app in
+`app/main.py`, so the run command doesn't need the `app.` package prefix. Without
+activating the venv, the equivalent is `./.venv/bin/uvicorn main:app --reload --port
+8008`.
 
 Tests (no network, no Gemini key needed — they exercise the compiler, the graph
 validator, and the CALL-E schema-subset check against the ported sample workflow, plus
@@ -97,6 +103,9 @@ Gemini credits; `validate` and `compile` are pure and ungated.
   spending a Gemini call.
 - `app/config.py` — env loading. Only `GEMINI_API_KEY`, `GEMINI_MODEL`, and the optional
   `ENGINE_SHARED_SECRET`.
+- `main.py` (top-level, not under `app/`) — one-line re-export of `app.main:app`, so
+  `uvicorn main:app --reload` works without the package prefix. Not where any logic
+  lives.
 
 ## Wired into the Next.js app
 
