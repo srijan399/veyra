@@ -20,8 +20,13 @@ Demo vertical: wealth management lead qualification (primary). Secondary vertica
 - Next.js (TypeScript), single app for frontend and backend (API routes)
 - Tailwind CSS for styling
 - React Flow for the interactive, editable workflow graph
-- Claude API (Anthropic) for natural language prompt to workflow schema generation
-- Supabase (Postgres) for storing workflows, campaigns, contacts, and call results
+- Gemini API (Google) for natural language prompt to workflow schema generation, called
+  from a standalone Python/FastAPI service (`engine/`), not from a Next.js API route
+  directly — see `engine/README.md`
+- Supabase (Postgres + Auth) for storing workflows, campaigns, contacts, and call
+  results, and for email/password auth
+- Drizzle ORM (`web/lib/db/`) for schema, migrations, and every data-layer query — see
+  the Authentication and Data Scoping section below for the RLS caveat this comes with
 - `@call-e/calle` SDK for placing calls and receiving structured results
 - Vercel for deployment
 
@@ -30,32 +35,52 @@ team first, we are optimizing for shipping speed, not architectural purity.
 
 ## Repository Structure
 
-- `app/` - Next.js pages and API routes
-  - `app/api/workflows/generate/route.ts` - prompt to workflow schema (Claude API)
-  - `app/api/workflows/[id]/compile/route.ts` - workflow schema to a Calls API task +
+- `web/app/` - Next.js pages and API routes
+  - `web/app/api/workflows/generate/route.ts` - `requireUser()`, then calls the engine
+    (`web/lib/engine-client.ts` -> `engine/`, Gemini) for prompt to workflow schema, persists
+    the result to `public.workflows`
+  - `web/app/api/workflows/[id]/compile/route.ts` - workflow schema to a Calls API task +
     result schema
-  - `app/api/campaigns/` - campaign creation and launch
-  - `app/api/calle/` - CALL-E SDK/API wrapper functions, all CALL-E calls go through here
-- `components/` - React components
-  - `components/WorkflowGraph.tsx` - React Flow rendering and editing of a workflow schema
-  - `components/NodeTable.tsx` - tabular summary of workflow nodes
-  - `components/CampaignBuilder.tsx` - contact upload and campaign launch UI
-  - `components/ResultsDashboard.tsx` - campaign results view
-- `types/workflow.ts` - the shared workflow schema definition, this is the contract between
+  - `web/app/api/campaigns/` - campaign creation and launch
+  - `web/app/api/calle/` - CALL-E SDK/API wrapper functions, all CALL-E calls go through here
+- `web/components/` - React components
+  - `web/components/WorkflowGraph.tsx` - React Flow rendering and editing of a workflow schema
+  - `web/components/NodeTable.tsx` - tabular summary of workflow nodes
+  - `web/components/CampaignBuilder.tsx` - contact upload and campaign launch UI
+  - `web/components/ResultsDashboard.tsx` - campaign results view
+- `web/types/workflow.ts` - the shared workflow schema definition, this is the contract between
   the generator, the visualizer, and the CALL-E compiler. Do not change this without
   updating all three consumers.
-- `lib/generator.ts` - Claude API prompt logic for workflow generation
-- `lib/compiler.ts` - workflow schema to Calls API request translation
-- `lib/validation.ts` - zod validation of generated workflows, plus enforcement of
-  CALL-E's supported JSON Schema subset
-- `lib/supabase/` - Supabase client setup: `client.ts` (browser), `server.ts` (server
-  components and route handlers), `middleware.ts` (session refresh plus route protection),
-  `auth.ts` (`getSessionUser`, `requireUser`)
-- `supabase/schema.sql` - tables, the profile trigger, and every RLS policy. Run by hand in
-  the Supabase SQL editor
-- `lib/calle-client.ts` - CALL-E SDK client wrapper
+- `web/lib/engine-client.ts` - server-side wrapper for the workflow engine's HTTP API
+  (generate, edit, validate, compile); no other file should call the engine directly
+- `web/lib/validation.ts` - zod validation of generated workflows, plus enforcement of
+  CALL-E's supported JSON Schema subset (also ported to Python in
+  `engine/app/calle_schema.py`, since the compiler now lives there)
+- `web/lib/supabase/` - Supabase Auth only now: `client.ts` (browser), `server.ts`
+  (server components and route handlers), `middleware.ts` (session refresh plus route
+  protection), `auth.ts` (`getSessionUser`, `requireUser`). None of these run data
+  queries any more — see `web/lib/db/` below.
+- `web/lib/db/schema.ts` - Drizzle table definitions, the source of truth for schema
+  (mirrors `web/supabase/schema.sql`, which is now superseded, kept only for history)
+- `web/lib/db/client.ts` - the raw Postgres connection (`DATABASE_URL`). Never query
+  through this directly from a route.
+- `web/lib/db/with-rls.ts` - `withRLS(userId, fn)`: every data query in a route must go
+  through this. See "Authentication and Data Scoping" below for why.
+- `web/drizzle/` - migrations. `pnpm db:generate` after changing `schema.ts`,
+  `pnpm db:migrate` to apply. `0001_rls_policies.sql` (hand-written, not generated) is
+  the RLS policies / profile trigger / grants — the table-structure part of a schema
+  change is generated, the RLS part is edited by hand in that file.
+- `web/supabase/schema.sql` - superseded by the above. Kept only as a historical
+  single-file reference of the same end state; do not run it against a database that has
+  already run the Drizzle migrations.
+- `web/lib/calle-client.ts` - CALL-E SDK client wrapper
+- `engine/` - standalone Python/FastAPI service owning workflow generation (Gemini),
+  natural-language editing, graph validation, and compilation (workflow schema to a
+  Calls API task + result schema). Stateless and CALL-E-credential-free; see
+  `engine/README.md`. `engine/app/models/workflow.py` mirrors `web/types/workflow.ts` and
+  must be updated alongside it, same as the three TypeScript consumers below.
 
-## Workflow Schema (types/workflow.ts)
+## Workflow Schema (web/types/workflow.ts)
 
 The core data contract. A workflow consists of:
 
@@ -73,16 +98,24 @@ The graph is Veyra's own authoring and editing abstraction. It is **not** sent t
 a graph, it is flattened at compile time into a single natural-language `task` string plus
 a `result_schema` (see CALL-E Integration Details below).
 
-Any change to this schema must be reflected in the generator prompt (lib/generator.ts),
-the React Flow renderer (components/WorkflowGraph.tsx), and the CALL-E compiler
-(lib/compiler.ts). Treat this file as the source of truth.
+Any change to this schema must be reflected in the generator prompt
+(`engine/app/generator.py`), the Pydantic mirror (`engine/app/models/workflow.py`), the
+React Flow renderer (`web/components/WorkflowGraph.tsx`), and the CALL-E compiler
+(`engine/app/compiler.py`). Treat this file as the source of truth.
 
 ## Common Commands
+
+All of these run from `web/`, not the repo root:
 
 - `npm run dev` - start local dev server
 - `npm run build` - production build
 - `npm run lint` - lint check
 - `npm run test` - run tests (if/when added)
+
+Engine (`engine/`) has its own commands, see `engine/README.md`: `uvicorn app.main:app
+--reload --port 8008` to run it, `pytest` to test it. It must be running (or `ENGINE_URL`
+pointed at a deployed instance) for `/api/workflows/generate` and
+`/api/workflows/[id]/edit` to work.
 
 ## Authentication and Data Scoping
 
@@ -91,51 +124,82 @@ OAuth, no MFA, no email verification. Full detail in TECHNICAL_ARCH.md, Authenti
 section. What matters when writing code:
 
 - **Every workflow and campaign route requires an authenticated user.** Pages under
-  `/workflow`, `/campaign` and `/profile` are guarded by `proxy.ts` (Next.js 16's rename of
-  middleware). API routes under `app/api/workflows/` and `app/api/campaigns/` must open
-  with `requireUser()` from `lib/supabase/auth.ts`:
+  `/workflow`, `/campaign` and `/profile` are guarded by `web/proxy.ts` (Next.js 16's rename of
+  middleware). API routes under `web/app/api/workflows/` and `web/app/api/campaigns/` must open
+  with `requireUser()` from `web/lib/supabase/auth.ts`:
 
   ```ts
   const auth = await requireUser();
   if (!auth.ok) return auth.response;
-  const { supabase, user } = auth;
+  const { user } = auth;
   ```
+
+  This step hasn't changed — `requireUser()` still verifies the session through Supabase
+  Auth. What changed is what happens after: `auth.supabase` is no longer where data
+  queries go, see the next point.
 
   The only route exempt is the CALL-E webhook, which has no user session.
 
-- **`user_id` scoping is enforced by RLS in Postgres, not in application code.** The client
-  from `requireUser()` is user-scoped, so select, update and delete are already restricted
-  to the caller's rows. Adding `.eq('user_id', user.id)` as defense in depth is fine, but do
-  not mistake it for the thing doing the work.
+- **Every data query goes through `withRLS(user.id, fn)` from `web/lib/db/with-rls.ts` —
+  never query `web/lib/db/client.ts`'s connection directly.** This is the one thing to
+  get right about the Drizzle setup. A direct Postgres connection has no idea which user
+  is asking; by default it either bypasses RLS entirely (the connecting role owns the
+  tables) or has no grants at all. `withRLS()` closes that gap by impersonating the
+  request's user inside one transaction — `set_config('request.jwt.claims', ...)` plus
+  `set local role authenticated` — so the exact same RLS policies that used to run under
+  PostgREST still run, just through Drizzle instead:
 
-- **Inserts must set `user_id: user.id` explicitly.** The RLS insert policy checks that
-  column, it does not populate it, so an insert that omits it fails the `with check`.
+  ```ts
+  const rows = await withRLS(user.id, (tx) =>
+    tx.select().from(workflows).where(eq(workflows.id, id)),
+  );
+  ```
+
+  **`user_id` scoping is still enforced by RLS in Postgres, not in application code** —
+  that did not change when the query builder did. Adding `.where(eq(workflows.userId,
+  user.id))` as defense in depth is fine, but do not mistake it for the thing doing the
+  work; the actual enforcement is the RLS policy, which only applies at all because of
+  `withRLS()`. A route that queries through `getDb()`/`client.ts` directly instead of
+  `withRLS()` is a cross-tenant data leak with no error message — nothing fails, it just
+  returns everyone's rows (or none, depending on the connecting role's own grants).
+
+- **Inserts must set `user_id`/`userId: user.id` explicitly.** The RLS insert policy checks
+  that column, it does not populate it, so an insert that omits it fails the `with check`
+  (verified: attempting to insert a row with someone else's `user_id` while impersonating a
+  different user raises, it doesn't silently write under the wrong owner).
 
 - **Any new table that stores user-owned data follows the same pattern, in the same
   change**: a `user_id uuid not null references auth.users(id) on delete cascade` column (or
-  ownership derived from a parent table that has one), RLS enabled, and written-out select /
-  insert / update / delete policies in `supabase/schema.sql`. A table added without policies
-  is reachable through the Data API by anyone. Do not defer this — an unpoliced table looks
-  identical to a policed one until someone else's data shows up on screen.
+  ownership derived from a parent table that has one) in `web/lib/db/schema.ts`, RLS enabled
+  and select/insert/update/delete policies written by hand in a new
+  `web/drizzle/000N_*.sql` migration (see `0001_rls_policies.sql` for the pattern — this is
+  not something `drizzle-kit generate` produces for you). A table added without policies is
+  reachable through `withRLS()` — and through the Data API, if it's ever exposed there — by
+  anyone. Do not defer this — an unpoliced table looks identical to a policed one until
+  someone else's data shows up on screen.
 
-- **Never use the service role key to work around RLS.** It bypasses row security entirely
-  and turns the route into a cross-tenant data leak. Its one legitimate use is the CALL-E
-  webhook.
+- **Never use the service role key, and never call `getDb()` without `withRLS()`, to work
+  around RLS.** Both bypass row security entirely and turn the route into a cross-tenant
+  data leak. The service role's one legitimate use is the CALL-E webhook; there is no
+  legitimate direct use of `getDb()` outside `with-rls.ts` itself.
 
 - **Never put an authorization decision behind a `user_metadata` claim.** It is
   client-editable. That is why `role` defaults to `'business_user'` in the database instead
   of being read from the signup payload.
 
-- `supabase/schema.sql` is the source of truth for tables, the profile trigger, and every
-  policy. It is idempotent, and it has to be run by hand in the Supabase SQL editor.
+- `web/lib/db/schema.ts` plus `web/drizzle/*.sql` are the source of truth for tables, the
+  profile trigger, and every policy. Apply with `pnpm db:migrate`, not by hand in the SQL
+  editor. `web/supabase/schema.sql` is the same end state kept only for historical
+  reference — do not run it against a database that has already run the migrations.
 
-- Client components read the current user via `useUser()` from `components/UserProvider.tsx`
+- Client components read the current user via `useUser()` from `web/components/UserProvider.tsx`
   (resolved server side in the root layout, so no fetch and no logged-out flash). Server
-  components use `getSessionUser()` from `lib/supabase/auth.ts`.
+  components use `getSessionUser()` from `web/lib/supabase/auth.ts`. Neither of these needs
+  `withRLS()` — they never touch `public.*` tables, only Supabase Auth's own session/user.
 
 ## CALL-E Integration Details
 
-All CALL-E SDK/API calls are wrapped in `lib/calle-client.ts` and `app/api/calle/`, no
+All CALL-E SDK/API calls are wrapped in `web/lib/calle-client.ts` and `web/app/api/calle/`, no
 CALL-E credentials or raw client calls should appear directly in frontend code or other
 API routes.
 
@@ -156,7 +220,7 @@ workflow, which defeats the point of the product. Use the one-shot Calls API ins
 pnpm add @call-e/calle
 ```
 
-Instantiated server side only, inside `lib/calle-client.ts`:
+Instantiated server side only, inside `web/lib/calle-client.ts`:
 
 ```ts
 const client = new CalleClient({ apiKey: process.env.CALLE_API_KEY! });
@@ -166,16 +230,18 @@ Never import this client, or `CALLE_API_KEY`, into client-side code.
 
 ### Two entry points into CALL-E
 
-1. **Compilation**: the workflow graph is flattened into a Calls API request in
-   `app/api/workflows/[id]/compile/route.ts` via `lib/compiler.ts`. Output shape:
+1. **Compilation**: the workflow graph is flattened into a Calls API request by
+   `engine/app/compiler.py` (not a Next.js file — see engine/README.md), called from
+   `web/app/api/workflows/[id]/compile/route.ts` (not yet built) via
+   `web/lib/engine-client.ts`. Output shape:
    `{ task, result_schema, recipient_result_schema?, metadata, webhook_url }`. CALL-E does
    not execute an external branching graph, it runs one adaptive conversation from a
    single task instruction and extracts structured data at the end of the call.
 2. **Execution**: launching a campaign places real calls via
-   `app/api/campaigns/[id]/launch/route.ts`. Results arrive by webhook at
-   `app/api/calle/webhook/route.ts`.
+   `web/app/api/campaigns/[id]/launch/route.ts`. Results arrive by webhook at
+   `web/app/api/calle/webhook/route.ts`.
 
-### Mandatory rules when touching lib/calle-client.ts or lib/compiler.ts
+### Mandatory rules when touching web/lib/calle-client.ts or engine/app/compiler.py
 
 - **One call per contact.** Create a separate Calls API request per contact, with the
   contact's name and relevant metadata interpolated directly into that contact's `task`
@@ -193,7 +259,7 @@ Never import this client, or `CALLE_API_KEY`, into client-side code.
   `integer`, `boolean`, or `array`, plus `properties`, `required`, `enum`, nested object
   fields, simple `array.items`, `description`, and `additionalProperties: false`.
   `$ref`, `oneOf`, `anyOf`, `allOf`, recursive schemas, and `additionalProperties: true`
-  are rejected server side. Validate in `lib/validation.ts` before sending.
+  are rejected server side. Validate in `web/lib/validation.ts` before sending.
 - **Webhook handling.** Set `webhook_url` on every call creation. Handle the three
   terminal event types `call.completed`, `call.failed`, and
   `call.result_validation_failed`. There is no webhook signature or secret, validate the
@@ -213,29 +279,40 @@ dispatching to a list.
 
 ## Environment Variables
 
-Copy `.env.example` to `.env.local` and fill it in. Never commit actual values:
+Copy `web/.env.example` to `web/.env.local` and fill it in. Never commit actual values:
 
-- `ANTHROPIC_API_KEY` - Claude API key for workflow generation
+- `ENGINE_URL` - base URL of the `engine/` FastAPI service, defaults to
+  `http://localhost:8008` when unset
+- `ENGINE_SHARED_SECRET` - optional, only needed if the engine has its own
+  `ENGINE_SHARED_SECRET` set (see `engine/.env.example`)
 - `CALLE_API_KEY` - CALL-E credentials
 - `CALLE_BASE_URL` - optional CALL-E API base URL override, defaults to
   `https://api.heycall-e.com`
+- `DATABASE_URL` - direct Postgres connection string for Drizzle (`web/lib/db/`), the
+  Supabase `postgres` role specifically, pooler connection string in transaction mode.
+  Not the same thing as `NEXT_PUBLIC_SUPABASE_URL` below. See `web/lib/db/with-rls.ts`
+  for why it must be the `postgres` role.
 - `NEXT_PUBLIC_SUPABASE_URL` - Supabase project URL
 - `SUPABASE_SERVICE_ROLE_KEY` - Supabase server side key. Bypasses RLS, webhook route only
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` - Supabase browser side key. Note PUBLISHABLE, not
-  ANON, this is what `lib/supabase/*.ts` actually read
+  ANON, this is what `web/lib/supabase/*.ts` actually read
 - `APP_URL` - public base URL of this app, used to build the `webhook_url` sent on every
   call. Local development needs a tunnel for CALL-E to reach the webhook.
 
-If you add a variable, add it to `.env.example` in the same commit, otherwise your
+`engine/` has its own `.env`/`engine/.env.example` (`GEMINI_API_KEY`, `GEMINI_MODEL`,
+`ENGINE_SHARED_SECRET`) — it is a separate service and does not read this app's
+`web/.env.local`.
+
+If you add a variable, add it to `web/.env.example` in the same commit, otherwise your
 teammate's next clone is missing it.
 
 ## Coding Conventions
 
 - TypeScript throughout, no implicit any
-- Prefer server side (API routes) for anything touching Claude API, CALL-E, or Supabase
+- Prefer server side (API routes) for anything touching the engine, CALL-E, or Supabase
   service role key, never expose these client side
 - Keep components small and focused, one responsibility per component
-- Use the shared `types/workflow.ts` types everywhere a workflow is passed around, do not
+- Use the shared `web/types/workflow.ts` types everywhere a workflow is passed around, do not
   redefine ad hoc shapes
 
 ## Repository Etiquette

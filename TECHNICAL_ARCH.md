@@ -27,7 +27,7 @@ pnpm install
 pnpm dev
 ```
 
-Do not commit package-lock.json or yarn.lock. Only pnpm-lock.yaml should exist in the
+Do not commit package-lock.json or yarn.lock. Only web/pnpm-lock.yaml should exist in the
 repo. If either of you accidentally generates one, delete it and re-run pnpm install.
 
 Common commands:
@@ -48,7 +48,7 @@ pnpm add -D <package> # add a dev dependency
 Veyra has five logical layers:
 
 1. Intake layer: captures a natural language description of a calling process from the user
-2. Generation layer: converts that description into a structured, machine readable workflow schema using the Claude API
+2. Generation layer: converts that description into a structured, machine readable workflow schema using the Gemini API, via a standalone Python/FastAPI service (`engine/`)
 3. Visualization/editing layer: renders the workflow schema as an interactive graph (React Flow) that a developer can inspect and modify
 4. Compilation layer: flattens the internal workflow graph into a single CALL-E Calls API request (a natural-language `task` plus a `result_schema`)
 5. Execution and results layer: dispatches one call per contact through CALL-E, receives structured call outcomes by webhook, and persists/displays them
@@ -73,12 +73,12 @@ flowchart TD
 
 ## 3. Data Model
 
-### 3.1 Workflow Schema (types/workflow.ts)
+### 3.1 Workflow Schema (web/types/workflow.ts)
 
 This is the central contract of the entire application. Every layer reads or writes this
 shape.
 
-This shape is what `types/workflow.ts` actually declares. Keep the two in step.
+This shape is what `web/types/workflow.ts` actually declares. Keep the two in step.
 
 ```ts
 type NodeType = "start" | "question" | "decision" | "terminal";
@@ -158,7 +158,7 @@ interface Workflow {
 - Keep the qualification rules simple (rule based, not ML scored) for the hackathon
   timeline. A weighted scoring model is a stretch goal, not a requirement.
 
-### 3.2 Campaign and Contact (types/campaign.ts)
+### 3.2 Campaign and Contact (web/types/campaign.ts)
 
 ```
 interface Contact {
@@ -193,12 +193,21 @@ completedAt?: string;
 }
 ```
 
-### 3.3 Supabase Schema (supabase/schema.sql)
+### 3.3 Database Schema (web/lib/db/schema.ts, web/drizzle/)
 
-`supabase/schema.sql` is the real, runnable version of everything below, including the
-profiles table, the signup trigger, and every RLS policy. Run it in the Supabase SQL
-editor; it is idempotent and safe to re-run. The Authentication section below explains the
-ownership model.
+Table structure lives in `web/lib/db/schema.ts` (Drizzle) and is applied via generated
+migrations in `web/drizzle/` — `pnpm db:generate` after a schema change, `pnpm db:migrate`
+to apply. RLS policies, the signup trigger, and grants are not expressible as Drizzle
+table structure, so they live in a hand-written migration,
+`web/drizzle/0001_rls_policies.sql`, alongside the generated ones. `web/supabase/schema.sql`
+is the same end state as both of those combined, kept only as a historical single-file
+reference — it is superseded, not run against a database that already ran the Drizzle
+migrations. The Authentication section below explains the ownership model, and its
+"Drizzle and RLS" subsection explains how that model survives Drizzle replacing
+PostgREST as the actual query path.
+
+The table shapes below are unchanged from the original design; only how they reach the
+database changed.
 
 ```
 create table profiles (
@@ -297,9 +306,12 @@ delete cascade` (section 3.3). `contacts` and `call_results` deliberately do not
 owner is derived through the parent campaign, so there is one source of truth rather than a
 duplicated column that can drift out of sync.
 
-The runnable source of everything below is **`supabase/schema.sql`**. It is idempotent, so
-re-running it after an edit is safe. It has to be executed by hand in the Supabase SQL
-editor — none of it takes effect until then.
+The runnable source of everything below is **`web/lib/db/schema.ts`** (table structure)
+plus **`web/drizzle/0001_rls_policies.sql`** (the trigger, RLS, and grants — hand-written,
+since none of that is expressible as Drizzle table structure). Apply with `pnpm
+db:migrate`. `web/supabase/schema.sql` is the same end state kept only as a historical
+single-file reference; it is superseded, do not run it against a database that has
+already run the Drizzle migrations.
 
 ### Profile creation trigger
 
@@ -369,10 +381,54 @@ Tables created from raw SQL are not necessarily exposed to the Data API, so the 
 grants the `authenticated` role explicitly. `anon` is granted nothing. Grants decide whether
 a table is reachable at all; RLS decides which rows come back.
 
+### Drizzle and RLS
+
+Every data query in the app goes through Drizzle (`web/lib/db/`) over a direct Postgres
+connection (`DATABASE_URL`), not through PostgREST. A direct connection has no idea which
+user is asking, and by default either bypasses RLS outright (the connecting role owns the
+tables) or has none of the grants above — so without deliberate handling, this would have
+been a straight regression from the RLS model just described, not a neutral swap of query
+builders.
+
+`web/lib/db/with-rls.ts` closes that gap. Supabase's `auth.uid()` function (used in every
+policy above) resolves by reading the `request.jwt.claim.sub` / `request.jwt.claims`
+session setting that PostgREST would normally set from the verified JWT before running a
+query. `withRLS(userId, fn)` reproduces exactly that, inside one transaction, before
+running `fn`:
+
+```ts
+export function withRLS<T>(userId: string, fn: (tx: RlsTx) => Promise<T>): Promise<T> {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const claims = JSON.stringify({ sub: userId, role: "authenticated" });
+    await tx.execute(sql`select set_config('request.jwt.claims', ${claims}, true)`);
+    await tx.execute(sql`set local role authenticated`);
+    return fn(tx);
+  });
+}
+```
+
+Both statements are transaction-local (`set_config`'s third argument, and `set local`
+itself) and revert automatically at commit/rollback — nothing leaks across the connection
+pool between requests. `set local role authenticated` is the step that actually re-enables
+RLS for the transaction: the connecting role (Supabase's `postgres` user) can bypass RLS
+outright otherwise, and `to authenticated` policies only apply to a session that really is
+that role. This is also why `DATABASE_URL` must be the `postgres` role's connection
+string specifically — Supabase makes that role a member of `authenticated` by default,
+precisely so tools can do this.
+
+**Every route must call data through `withRLS()`, never through `web/lib/db/client.ts`'s
+`getDb()` directly.** A route that skips it is a cross-tenant data leak with no error
+message — nothing throws, it just returns the wrong rows (or none). This was verified
+directly against a throwaway Postgres instance running both `web/drizzle` migrations:
+inserting as one impersonated user and then reading, updating, and inserting-with-a-
+spoofed-`user_id` as a second impersonated user all behaved exactly as the RLS policies
+above specify — zero rows visible, zero rows updated, insert rejected.
+
 ### Route protection
 
-Next.js 16 renamed middleware to **`proxy.ts`**, which calls `updateSession` in
-`lib/supabase/middleware.ts` — the `@supabase/ssr` pattern, unchanged apart from the guard.
+Next.js 16 renamed middleware to **`web/proxy.ts`**, which calls `updateSession` in
+`web/lib/supabase/middleware.ts` — the `@supabase/ssr` pattern, unchanged apart from the guard.
 `PROTECTED_PREFIXES` covers `/workflow`, `/campaign`, `/profile`, their plural forms, and
 `/api/workflows`, `/api/campaigns`.
 
@@ -396,13 +452,14 @@ be logged out at random, and it is very hard to debug after the fact.
 
 | Path | Purpose |
 | ---- | ------- |
-| `supabase/schema.sql` | Tables, trigger, RLS policies, grants. Run by hand. |
-| `lib/supabase/auth.ts` | `getSessionUser()` for server components; `requireUser()` for API routes. |
-| `app/auth/actions.ts` | `login`, `signup`, `logout` server actions. |
-| `app/auth/AuthForm.tsx` | Shared login/signup form shell. |
-| `components/UserProvider.tsx` | `useUser()` context, plus `initialsFor()`. |
-| `components/AccountIndicator.tsx` | Header account tile and log-out control. |
-| `app/profile/page.tsx` | Account screen. Identity is real; the workflow cards are still sample data. |
+| `web/lib/db/schema.ts` + `web/drizzle/` | Tables, trigger, RLS policies, grants. `pnpm db:generate` / `pnpm db:migrate`. |
+| `web/lib/db/with-rls.ts` | Every data query goes through `withRLS(userId, fn)` — see "Drizzle and RLS" above. |
+| `web/lib/supabase/auth.ts` | `getSessionUser()` for server components; `requireUser()` for API routes. Auth (session) only — no data queries. |
+| `web/app/auth/actions.ts` | `login`, `signup`, `logout` server actions. |
+| `web/app/auth/AuthForm.tsx` | Shared login/signup form shell. |
+| `web/components/UserProvider.tsx` | `useUser()` context, plus `initialsFor()`. |
+| `web/components/AccountIndicator.tsx` | Header account tile and log-out control. |
+| `web/app/profile/page.tsx` | Account screen. Identity is real; the workflow cards are still sample data. |
 
 `getSessionUser()` uses `supabase.auth.getUser()`, not `getSession()` — getSession reads the
 cookie without verifying it and can be spoofed. The root layout resolves the user once and
@@ -414,17 +471,23 @@ no logged-out flash; the auth actions call `revalidatePath('/', 'layout')` to re
 ```ts
 const auth = await requireUser();
 if (!auth.ok) return auth.response;
-const { supabase, user } = auth;
+const { user } = auth;
+
+const rows = await withRLS(user.id, (tx) =>
+  tx.select().from(workflows).where(eq(workflows.id, id)),
+);
 ```
 
-- The client returned is the **user-scoped** one, so RLS enforces ownership on select,
-  update and delete. An explicit `.eq('user_id', user.id)` is fine as defense in depth, but
-  it is not what is doing the work.
-- **Inserts must set `user_id: user.id` explicitly.** The insert policy checks that column,
+- `requireUser()` verifies the session; `withRLS()` is what makes RLS enforce ownership on
+  the query that follows — see "Drizzle and RLS" above. A `.where(eq(workflows.userId,
+  user.id))` alongside it is fine as defense in depth, but it is not what is doing the
+  work.
+- **Inserts must set `userId: user.id` explicitly.** The insert policy checks that column,
   it does not populate it, so an insert without it fails the `with check`.
-- Never substitute the service role client to make a query work. It bypasses RLS entirely
-  and turns the route into a cross-tenant leak. The one legitimate service-role caller is
-  the CALL-E webhook, which has no user session to work from.
+- Never call `getDb()` directly, and never substitute the service role client, to make a
+  query work. Both bypass RLS entirely and turn the route into a cross-tenant leak. The one
+  legitimate service-role caller is the CALL-E webhook, which has no user session to work
+  from.
 
 ### Project settings (manual, cannot be done from code)
 
@@ -462,7 +525,7 @@ of the product. The one-shot Calls API is the correct surface.
 pnpm add @call-e/calle
 ```
 
-Server side only, inside `lib/calle-client.ts`:
+Server side only, inside `web/lib/calle-client.ts`:
 
 ```ts
 import { CalleClient } from "@call-e/calle";
@@ -476,7 +539,7 @@ may be passed as `baseUrl` to override the default `https://api.heycall-e.com`.
 Note the naming seam: the **wire API uses snake_case** (`result_schema`,
 `recipient_result_schema`, `webhook_url`) while the **TypeScript SDK uses camelCase**
 (`resultSchema`, `recipientResultSchema`, `webhookUrl`). This document uses the wire names;
-`lib/calle-client.ts` is the only place the two spellings meet.
+`web/lib/calle-client.ts` is the only place the two spellings meet.
 
 ### 4.3 Request shape
 
@@ -535,13 +598,13 @@ Not supported, will be rejected:
 - recursive schemas
 - `additionalProperties: true`
 
-`lib/validation.ts` enforces this before any request reaches CALL-E. Catching it at
+`web/lib/validation.ts` enforces this before any request reaches CALL-E. Catching it at
 compile time rather than at demo time is the whole point.
 
 **Reserved recipient field names.** If `recipient_result_schema` is ever used, avoid
 CALL-E's reserved recipient field names: `summary`, `status`, `transcript`, `call_id`, and
 any timing-related field name (`started_at`, `completed_at`, `duration`, and similar).
-This constraint is noted in `types/workflow.ts` next to `OutcomeField` so it is not
+This constraint is noted in `web/types/workflow.ts` next to `OutcomeField` so it is not
 rediscovered the hard way.
 
 ### 4.6 Idempotency
@@ -571,7 +634,7 @@ to our internal ids.
 
 ### 4.8 Webhook contract
 
-- `webhook_url` is set per call creation, pointing at `app/api/calle/webhook/route.ts`.
+- `webhook_url` is set per call creation, pointing at `web/app/api/calle/webhook/route.ts`.
 - Three terminal event types: `call.completed`, `call.failed`,
   `call.result_validation_failed`.
 - **No signature, no secret.** CALL-E webhook deliveries are unsigned (the SDK's
@@ -588,16 +651,18 @@ to our internal ids.
 
 ---
 
-## 5. Generation Layer (lib/generator.ts)
+## 5. Generation Layer (engine/app/generator.py)
 
 ### 5.1 Responsibility
 
 Takes a natural language prompt and returns a Workflow object matching the schema in
-section 3.1.
+section 3.1. Lives in the standalone Python/FastAPI engine (`engine/`), not in a Next.js
+API route — `web/app/api/workflows/generate/route.ts` calls it over HTTP via
+`web/lib/engine-client.ts`, then persists the result. See `engine/README.md`.
 
 ### 5.2 Implementation Approach
 
-Call the Claude API (Anthropic) with a system prompt instructing it to:
+Call the Gemini API (Google) with a system prompt instructing it to:
 
 1. Identify the goal of the calling process
 2. Identify what information needs to be collected from the contact
@@ -605,34 +670,43 @@ Call the Claude API (Anthropic) with a system prompt instructing it to:
    outcome, and any domain specific branches like risk tolerance tiers)
 4. Generate qualification rules based on the information collected
 5. Generate the outcome schema (what structured data the campaign should return)
-6. Return only valid JSON matching the Workflow TypeScript type, no prose, no markdown fences
+6. Return only valid JSON matching the Workflow schema, no prose, no markdown fences
 
 Pseudocode:
 
+```python
+def generate_workflow(prompt: str) -> Workflow:
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[prompt],
+        config=GenerateContentConfig(
+            system_instruction=WORKFLOW_GENERATION_SYSTEM_PROMPT,  # schema + examples
+            response_mime_type="application/json",
+        ),
+    )
+    parsed = json.loads(response.text)
+    return Workflow.model_validate(parsed)  # pydantic, raises on malformed
 ```
-async function generateWorkflow(prompt: string): Promise<Workflow> {
-const response = await anthropic.messages.create({
-model: "claude-sonnet-4-6",
-max_tokens: 2000,
-system: WORKFLOW_GENERATION_SYSTEM_PROMPT, includes schema definition + examples
-messages: [{ role: "user", content: prompt }],
-});
 
-const raw = extractTextContent(response);
-const parsed = JSON.parse(stripCodeFences(raw));
-return validateWorkflowSchema(parsed); zod validation, throws if malformed
-}
-```
+`response_mime_type: "application/json"` (Gemini's JSON mode) guarantees syntactically
+valid JSON without markdown fences; it does not enforce the Workflow shape on its own
+(Gemini's stricter `response_schema` mode does not support the recursive
+`OutcomeField.items`/`properties` nesting the schema needs), so the system prompt states
+the schema explicitly and Pydantic is the actual gate.
 
-### 5.3 Validation (lib/validation.ts)
+### 5.3 Validation (engine/app/graph_validation.py, engine/app/calle_schema.py)
 
-Use zod to define a schema mirroring the Workflow type and validate every generation
-result before it is stored or passed downstream. If validation fails, retry once with an
-error correction message appended to the prompt before surfacing an error to the user.
+Pydantic mirrors the Workflow type structurally; every generation result is validated
+against it before it is returned. If validation fails, retry once with the validation
+error appended to the prompt before surfacing an error to the caller.
+`engine/app/graph_validation.py` additionally checks graph semantics a type checker can't
+(exactly one start node, no dangling edges, no unreachable nodes, etc.) — errors block,
+warnings don't.
 
-`lib/validation.ts` also owns enforcement of CALL-E's supported JSON Schema subset
-(section 4.5). `assertCalleSchemaSubset()` runs over any compiled `result_schema` or
-`recipient_result_schema` and throws on `$ref`, `oneOf`, `anyOf`, `allOf`, an unsupported
+`engine/app/calle_schema.py` owns enforcement of CALL-E's supported JSON Schema subset
+(section 4.5) — a Python port of the same checks `web/lib/validation.ts` describes.
+`assert_calle_schema_subset()` runs over any compiled `result_schema` or
+`recipient_result_schema` and raises on `$ref`, `oneOf`, `anyOf`, `allOf`, an unsupported
 `type`, or `additionalProperties: true`. Nothing reaches the Calls API without passing it.
 Because the generator writes the outcome schema, it is the most likely source of an
 unsupported construct, so the generator system prompt must state the subset explicitly as
@@ -648,7 +722,7 @@ behavior without re-reading generator code.
 
 ---
 
-## 6. Visualization and Editing Layer (components/WorkflowGraph.tsx)
+## 6. Visualization and Editing Layer (web/components/WorkflowGraph.tsx)
 
 ### 6.1 Responsibility
 
@@ -679,13 +753,18 @@ This avoids race conditions and is easier to demo reliably.
 
 ---
 
-## 7. Compilation Layer (lib/compiler.ts)
+## 7. Compilation Layer (engine/app/compiler.py)
 
 ### 7.1 Responsibility
 
-Flatten the internal Workflow graph into a single CALL-E Calls API request. The compiler
-does **not** translate nodes and edges into a state machine config, and does not create or
-publish anything on CALL-E's side.
+Flatten the internal Workflow graph into a single CALL-E Calls API request. Lives in the
+engine (same service as generation, section 5), not in a Next.js API route — the
+compiler needs no CALL-E credentials and no Supabase access, only the Workflow, the
+contact, and a webhook URL, so it stays in the credential-free, stateless service.
+`web/app/api/workflows/[id]/compile/route.ts` (not yet built) would call it over HTTP via
+`web/lib/engine-client.ts`, same shape as the generate route. The compiler does **not**
+translate nodes and edges into a state machine config, and does not create or publish
+anything on CALL-E's side.
 
 CALL-E does not execute an external branching graph. It runs one adaptive conversation
 from a single task instruction and extracts structured data afterward, at the end of the
@@ -693,6 +772,9 @@ call. The graph is Veyra's own authoring and editing abstraction, and it gets fl
 here.
 
 ### 7.2 Implementation Approach
+
+Wire shape (`engine/app/models/campaign.py:CalleCallRequest`, same field names on both
+sides of the HTTP boundary):
 
 ```ts
 interface CalleCallRequest {
@@ -702,22 +784,25 @@ interface CalleCallRequest {
   metadata: { campaignId: string; contactId: string };
   webhook_url: string;
 }
-
-function compileWorkflow(
-  workflow: Workflow,
-  context: { campaignId: string; contact: Contact },
-): CalleCallRequest {
-  // 1. Walk nodes in graph order and render each `say` as an instruction sentence.
-  // 2. Render each conditional edge as an "if ... then ..." clause, so branching survives
-  //    as natural language rather than as structure.
-  // 3. Fold the qualification rules and threshold into a plain-language qualification
-  //    instruction. Scoring itself is re-evaluated our side from the returned fields.
-  // 4. Interpolate the contact's name and metadata into the task (see 4.4).
-  // 5. Derive result_schema from workflow.outcomeSchema, then run
-  //    assertCalleSchemaSubset() over it (see 4.5).
-  // 6. Attach metadata and webhook_url.
-}
 ```
+
+Implemented in `engine/app/compiler.py:compile_workflow()`:
+
+1. Walk nodes depth-first from the start node, following each node's edges in authored
+   order, and render each `say` as an instruction sentence. DFS rather than BFS: it keeps
+   the main line of the conversation contiguous in the rendered task, instead of
+   interleaving a short-circuit branch's target (e.g. a "No" edge straight to a terminal)
+   into the middle of it.
+2. Render each conditional edge as an "if ... then ..." clause, so branching survives as
+   natural language rather than as structure.
+3. Fold the qualification rules and threshold into a plain-language qualification
+   instruction. Scoring itself is re-evaluated our side from the returned fields.
+4. Interpolate the contact's name and metadata into the task (see 4.4).
+5. Derive `result_schema` from `workflow.outcomeSchema` — including a `next_step` enum
+   property, so the permitted disposition values actually survive into what CALL-E is
+   asked to extract — then run `assert_calle_schema_subset()` over it (see 4.5,
+   `engine/app/calle_schema.py`).
+6. Attach metadata and webhook_url.
 
 The rendered `task` should read as a coherent brief to a human caller, not as a serialized
 graph. A worked example lives in the README's "What this compiles into" section.
@@ -736,8 +821,11 @@ execution end to end.
 
 ### 7.4 Credential Handling
 
-All CALL-E credentials live server side only (`CALLE_API_KEY` in .env.local), compilation
-happens exclusively in the POST /api/workflows/[id]/compile API route, never client side.
+All CALL-E credentials live server side only (`CALLE_API_KEY` in web/.env.local), never in the
+engine and never client side. Compilation itself needs no CALL-E credentials — it only
+produces the request body — so it happens in the credential-free engine; dispatching the
+compiled request to CALL-E happens later, in `web/app/api/campaigns/[id]/launch/route.ts`
+(section 8.2), which is the only place `CALLE_API_KEY` is read.
 
 ---
 
@@ -748,7 +836,7 @@ happens exclusively in the POST /api/workflows/[id]/compile API route, never cli
 Launch a campaign (a workflow config plus a contact list) through CALL-E, and capture
 structured results as calls complete.
 
-### 8.2 Launch Flow (app/api/campaigns/[id]/launch/route.ts)
+### 8.2 Launch Flow (web/app/api/campaigns/[id]/launch/route.ts)
 
 **One Calls API request per contact**, each with that contact's details interpolated into
 their own task string. Not CALL-E's batch `recipients` array, which sends identical text to
@@ -790,7 +878,7 @@ contact. Worth a mention in the Campaign Builder UI if time allows, but do not b
 for the hackathon, and note that the lack of a cancel operation makes small waves a
 sensible safety habit regardless (section 13).
 
-### 8.3 Results Capture (app/api/calle/webhook/route.ts)
+### 8.3 Results Capture (web/app/api/calle/webhook/route.ts)
 
 **Webhooks. Confirmed, not a choice.** The earlier "webhook vs polling" question is
 settled: CALL-E posts terminal events to the `webhook_url` set on each call creation. Full
@@ -850,7 +938,7 @@ Given the 20 free call limit per account, and the ability to request more:
 
 ---
 
-## 9. Results Dashboard (components/ResultsDashboard.tsx)
+## 9. Results Dashboard (web/components/ResultsDashboard.tsx)
 
 Simple table view per campaign, columns: Contact, Status, Qualified, Captured Data,
 Transcript.
@@ -870,6 +958,7 @@ outcomes (section 4.8), and the dashboard is on camera during the demo.
 /api/workflows/generate POST prompt -> generated Workflow, stores in Supabase
 /api/workflows/[id] GET fetch a workflow by id
 /api/workflows/[id] PATCH update a workflow (from the editor)
+/api/workflows/[id]/edit POST natural-language edit instruction -> updated Workflow via the engine, stores in Supabase
 /api/workflows/[id]/compile POST Workflow -> Calls API request (task + result_schema), stores in campaign
 /api/campaigns POST create a campaign from a compiled workflow + contacts
 /api/campaigns/[id]/launch POST create one idempotent CALL-E call per contact in the campaign
@@ -877,7 +966,7 @@ outcomes (section 4.8), and the dashboard is on camera during the demo.
 /api/calle/webhook POST receive terminal call events from CALL-E (public, unsigned, deduplicated)
 
 Every route above except the webhook requires an authenticated user and must open with
-`requireUser()` from `lib/supabase/auth.ts`. Inserts set `user_id` explicitly; reads,
+`requireUser()` from `web/lib/supabase/auth.ts`. Inserts set `user_id` explicitly; reads,
 updates and deletes are scoped by RLS. The webhook is the sole exception: it has no user
 session, runs under the service role, and is a public untrusted-input boundary. See the
 Authentication section.
@@ -886,7 +975,9 @@ Authentication section.
 
 ## 11. Environment Variables
 
-ANTHROPIC_API_KEY=
+ENGINE_URL=              # base URL of engine/, defaults to http://localhost:8008
+ENGINE_SHARED_SECRET=    # optional, only if the engine has its own set
+DATABASE_URL=            # direct Postgres connection, the `postgres` role specifically — see "Drizzle and RLS"
 CALLE_API_KEY=
 CALLE_BASE_URL=          # optional, defaults to https://api.heycall-e.com
 APP_URL=                 # public base URL used to build webhook_url
@@ -894,23 +985,28 @@ NEXT_PUBLIC_SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=          # bypasses RLS, webhook route only
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 
+`engine/` has its own `GEMINI_API_KEY` / `GEMINI_MODEL` / `ENGINE_SHARED_SECRET` in
+`engine/.env.example` — it is a separate service with its own env file, not a section of
+this app's `web/.env.local`.
+
 The browser key is `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, not `..._ANON_KEY` — that is
-what `lib/supabase/{client,server,middleware}.ts` read, and it is Supabase's current name
+what `web/lib/supabase/{client,server,middleware}.ts` read, and it is Supabase's current name
 for the key. Legacy `anon` keys still work but are kept only for compatibility.
 
-Two Supabase settings are not environment variables and cannot be set from code: "Confirm
-email" must be OFF under Authentication > Providers > Email, and `supabase/schema.sql` must
-be run in the SQL editor. See the Authentication section.
+One Supabase setting is not an environment variable and cannot be set from code: "Confirm
+email" must be OFF under Authentication > Providers > Email. See the Authentication
+section. The database migrations (`pnpm db:migrate`, not the SQL editor) are a one-time
+setup step, not a per-environment setting, but still have to be run before anything works.
 
-`.env.example` is committed and lists every variable with no values. Copy it:
+`web/.env.example` is committed and lists every variable with no values. Copy it:
 
 ```
-cp .env.example .env.local
+cp web/.env.example web/.env.local
 ```
 
-`.env.local` is gitignored (`.gitignore` negates `.env*` for `.env.example` only). Both
+`web/.env.local` is gitignored (`web/.gitignore` negates `.env*` for `web/.env.example` only). Both
 teammates need their own copy locally, share values through a secure channel, not through
-the repo or chat history. Any new variable goes into `.env.example` in the same commit
+the repo or chat history. Any new variable goes into `web/.env.example` in the same commit
 that introduces it.
 
 ---
@@ -918,7 +1014,7 @@ that introduces it.
 ## 12. Build Order (maps to roadmap phases)
 
 1. Scaffold Next.js + pnpm + Tailwind + Supabase connection
-2. Define and lock types/workflow.ts (section 3.1), write 2 to 3 hand written example
+2. Define and lock web/types/workflow.ts (section 3.1), write 2 to 3 hand written example
    workflows to validate the schema before automating generation
 3. Build generation layer, test against hand written examples for consistency
 4. Build visualization/editing layer against generator output
@@ -937,7 +1033,7 @@ that introduces it.
 | No cancel operation exists once a call is created. A bad or malformed task dispatched to many contacts cannot be aborted mid-flight. | High. Burns limited call credits and places real, wrong phone calls that cannot be recalled. | Test every task change against a single contact first. Dispatch in small waves rather than the full contact list at once, especially before the final demo recording. |
 | `structured_result` can be null when CALL-E cannot extract a schema-valid answer from the call. | Medium. Crashes or blank states in the results dashboard, on camera. | Treat null as a normal, expected state in both the Supabase write path and the UI. Render it as "no result extracted". Covered in sections 4.8, 8.3 and 9. |
 | 20 free call credits per account, and real calls cost credits to test. | Medium. Running out mid-build, or during the demo recording. | Mock CALL-E responses during UI work. Reserve 3 to 5 real calls for the recording. Request more credits early (section 8.4). |
-| The generator can emit an outcome schema using unsupported JSON Schema features. | Medium. CALL-E rejects the request, or silently nulls the result, and it surfaces at demo time. | State the supported subset explicitly in the generator system prompt, and enforce it in `lib/validation.ts` before dispatch (sections 4.5, 5.3). |
+| The generator can emit an outcome schema using unsupported JSON Schema features. | Medium. CALL-E rejects the request, or silently nulls the result, and it surfaces at demo time. | State the supported subset explicitly in the generator system prompt, and enforce it in `web/lib/validation.ts` before dispatch (sections 4.5, 5.3). |
 
 ---
 
@@ -946,7 +1042,7 @@ that introduces it.
 Full technical architecture, data models, API contracts, and build order live in
 TECHNICAL_ARCH.md. Read it before implementing or modifying:
 
-- the Workflow schema (types/workflow.ts) - see TECHNICAL_ARCH.md section 3.1
+- the Workflow schema (web/types/workflow.ts) - see TECHNICAL_ARCH.md section 3.1
 - any generator, visualizer, or compiler code - see sections 5, 6, 7
 - anything touching CALL-E (client, compiler, launch, webhook) - see section 4
 - API routes - see section 10 for the full route summary
