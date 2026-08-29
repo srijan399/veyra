@@ -19,8 +19,8 @@ export interface Contact {
  */
 export interface CalleCallRequest {
   task: string;
-  result_schema: object;
-  recipient_result_schema?: object;
+  result_schema: Record<string, unknown>;
+  recipient_result_schema?: Record<string, unknown>;
   metadata: { campaignId: string; contactId: string };
   webhook_url: string;
 }

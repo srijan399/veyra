@@ -24,7 +24,8 @@ export default function WorkflowEditor({
   const [view, setView] = useState<View>("graph");
   const [selectedId, setSelectedId] = useState<string | null>("n3");
   const [dirty, setDirty] = useState(initiallyDirty);
-  const [compiledAt, setCompiledAt] = useState("14:02:11");
+  const [compiling, setCompiling] = useState(false);
+  const [compileError, setCompileError] = useState<string | null>(null);
   const router = useRouter();
 
   const selected = nodes.find((n) => n.id === selectedId) ?? null;
@@ -40,13 +41,41 @@ export default function WorkflowEditor({
   const moveNode = (id: string, x: number, y: number) =>
     setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, x, y } : n)));
 
-  const compile = () => {
-    // TODO: POST to /api/workflows/[id]/compile, which flattens the graph into a
-    // Calls API task + result_schema. For now just stamp the time and move on.
-    const at = new Date().toLocaleTimeString("en-GB", { hour12: false });
-    setDirty(false);
-    setCompiledAt(at);
-    router.push(`/campaign?at=${encodeURIComponent(at)}`);
+  const compile = async () => {
+    setCompiling(true);
+    setCompileError(null);
+    const currentWorkflow: Workflow = { ...workflow, nodes };
+
+    try {
+      const response = await fetch(`/api/workflows/${workflow.id}/compile`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workflow: currentWorkflow }),
+      });
+      const body: unknown = await response.json();
+      if (!response.ok) {
+        const errorBody = body as { error?: unknown; detail?: unknown; issues?: unknown };
+        const summary =
+          typeof errorBody.error === "string" ? errorBody.error : "Workflow compilation failed";
+        const detail =
+          typeof errorBody.detail === "string"
+            ? errorBody.detail
+            : Array.isArray(errorBody.issues)
+              ? errorBody.issues.filter((issue) => typeof issue === "string").join("; ")
+              : "";
+        throw new Error(detail ? `${summary}: ${detail}` : summary);
+      }
+
+      const campaignId = (body as { campaignId?: unknown }).campaignId;
+      if (typeof campaignId !== "string") {
+        throw new Error("The compiler response did not include a campaign id.");
+      }
+      setDirty(false);
+      router.push(`/campaign?campaign=${encodeURIComponent(campaignId)}`);
+    } catch (error) {
+      setCompileError(error instanceof Error ? error.message : "Workflow compilation failed");
+      setCompiling(false);
+    }
   };
 
   return (
@@ -81,17 +110,24 @@ export default function WorkflowEditor({
             }`}
           >
             <span className="inline-block size-1.5 bg-current" />
-            {dirty ? "Edited since last compile" : `Compiled ${compiledAt}`}
+            {dirty ? "Edited since last compile" : "Saved and compiled"}
           </span>
           <button
             type="button"
             onClick={compile}
-            className="inline-flex flex-none cursor-pointer items-center gap-[9px] whitespace-nowrap border-0 bg-flame px-4 py-[11px] text-[13.5px] font-extrabold text-ink"
+            disabled={compiling}
+            className="inline-flex flex-none cursor-pointer items-center gap-[9px] whitespace-nowrap border-0 bg-flame px-4 py-[11px] text-[13.5px] font-extrabold text-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Compile to Call
+            {compiling ? "Compiling…" : "Compile to Call"}
           </button>
         </div>
       </div>
+
+      {compileError ? (
+        <div role="alert" className="border-b border-red-400/40 bg-red-950/30 px-[22px] py-3 text-sm text-red-200">
+          {compileError}
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 flex-1">
         {view === "graph" ? (
