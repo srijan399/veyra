@@ -17,7 +17,9 @@ def test_rejected_keywords_raise(keyword):
 
 def test_additional_properties_true_raises():
     with pytest.raises(CalleSchemaError):
-        assert_calle_schema_subset({"type": "object", "properties": {}, "additionalProperties": True})
+        assert_calle_schema_subset(
+            {"type": "object", "properties": {}, "additionalProperties": True}
+        )
 
 
 def test_array_without_items_raises():

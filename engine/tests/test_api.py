@@ -1,18 +1,36 @@
-from fastapi.testclient import TestClient
+import asyncio
 
+from httpx import ASGITransport, AsyncClient
+
+from app.config import settings
 from app.main import app
 from app.sample_workflow import SAMPLE_WORKFLOW
 
-client = TestClient(app)
+
+async def _request(method: str, path: str, *, json: dict | None = None):
+    headers = (
+        {"authorization": f"Bearer {settings.shared_secret}"} if settings.shared_secret else {}
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+        headers=headers,
+    ) as client:
+        return await client.request(method, path, json=json)
+
+
+def request(method: str, path: str, *, json: dict | None = None):
+    """Use HTTPX's native ASGI transport without TestClient's deprecated thread portal."""
+    return asyncio.run(_request(method, path, json=json))
 
 
 def test_health():
-    assert client.get("/health").json() == {"status": "ok"}
+    assert request("GET", "/health").json() == {"status": "ok"}
 
 
 def test_validate_sample_workflow():
-    response = client.post(
-        "/workflows/validate", json={"workflow": SAMPLE_WORKFLOW.model_dump(by_alias=True)}
+    response = request(
+        "POST", "/workflows/validate", json={"workflow": SAMPLE_WORKFLOW.model_dump(by_alias=True)}
     )
     assert response.status_code == 200
     body = response.json()
@@ -21,12 +39,13 @@ def test_validate_sample_workflow():
 
 
 def test_validate_rejects_malformed_workflow():
-    response = client.post("/workflows/validate", json={"workflow": {"goal": "x"}})
+    response = request("POST", "/workflows/validate", json={"workflow": {"goal": "x"}})
     assert response.status_code == 422
 
 
 def test_compile_sample_workflow():
-    response = client.post(
+    response = request(
+        "POST",
         "/workflows/compile",
         json={
             "workflow": SAMPLE_WORKFLOW.model_dump(by_alias=True),
