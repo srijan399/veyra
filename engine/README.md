@@ -55,6 +55,19 @@ the FastAPI routes that don't call Gemini):
 ./.venv/bin/pytest
 ```
 
+The Makefile provides the normal development workflow. Ruff is resolved through `uv`,
+so it does not need to be installed into the engine virtualenv:
+
+```bash
+make help          # list commands
+make format        # fix lint/import ordering, then format
+make lint          # lint and import-order check only
+make format-check  # formatting check only
+make test          # complete pytest suite
+make check         # format-check + lint + tests, suitable for CI
+make run           # start the engine on port 8008
+```
+
 ## Endpoints
 
 | Route | Method | Body | Does |
@@ -65,9 +78,9 @@ the FastAPI routes that don't call Gemini):
 | `/workflows/validate` | POST | `{ "workflow": Workflow }` | Structural (Pydantic) + semantic (graph) validation only, no Gemini call — `{ valid, errors, warnings }` |
 | `/workflows/compile` | POST | `{ "workflow", "campaign_id", "contact", "webhook_url" }` | Flattens the graph into `{ task, result_schema, metadata, webhook_url }` — the same shape the compilation layer is specified to produce |
 
-`generate` and `edit` are gated by an optional shared secret (`ENGINE_SHARED_SECRET`,
-sent as `Authorization: Bearer <secret>`) since they're the two routes that spend
-Gemini credits; `validate` and `compile` are pure and ungated.
+Every `/workflows/*` route is gated by the optional shared secret
+(`ENGINE_SHARED_SECRET`, sent as `Authorization: Bearer <secret>`). When the secret is
+unset, local development remains open. `/health` is always ungated.
 
 ## What each file does
 
@@ -92,11 +105,12 @@ Gemini credits; `validate` and `compile` are pure and ungated.
 - `app/compiler.py` — the flattening logic from TECHNICAL_ARCH section 7: walks nodes
   depth-first from start (so the main line of the conversation stays contiguous and a
   short-circuit branch like a "No" edge to a terminal doesn't get interleaved into the
-  middle of it), renders conditional edges as "if X then continue to Y" clauses, folds
-  qualification rules into a plain-language scoring paragraph, derives `result_schema`
-  from `outcomeSchema` (including a `next_step` enum field so the permitted disposition
-  values actually survive into what CALL-E is asked to extract), and runs the CALL-E
-  schema-subset check before returning.
+  middle of it), presents authored node copy as required conversational intent rather
+  than a verbatim script, renders conditional edges as "if X then continue to Y" clauses,
+  folds qualification rules into a plain-language scoring paragraph, derives
+  `result_schema` from `outcomeSchema` (including a `next_step` enum field so the
+  permitted disposition values actually survive into what CALL-E is asked to extract),
+  and runs the CALL-E schema-subset check before returning.
 - `app/main.py` — the FastAPI routes above; thin, no business logic of its own.
 - `app/sample_workflow.py` — Python port of `web/lib/sample-workflow.ts`, used by the tests
   so compiler/validator behavior can be checked against a known-good fixture without
@@ -120,7 +134,9 @@ relative to `web/`, not to this README's location.
   `PATCH` saves graph edits made in the visual editor.
 - `web/app/api/workflows/[id]/edit/route.ts` — `POST { instruction }`, calls
   `/workflows/edit` with the saved workflow, persists the result.
+- `web/app/api/workflows/[id]/compile/route.ts` — saves and compiles the edited workflow,
+  then creates the owned Phase 2 campaign/contact records.
+- `web/app/api/campaigns/[id]/compile/route.ts` — recompiles the persisted workflow for
+  the campaign's current first contact before CALL-E preview approval.
 
-Not yet wired: `web/app/api/workflows/[id]/compile/route.ts` (campaigns/contacts don't
-exist in the UI yet) and `web/app/api/campaigns/[id]/launch/route.ts` — the compile
-endpoint above is ready for it whenever that lands.
+Not yet wired: multi-contact launch and webhook result capture. Those are later phases.
