@@ -139,4 +139,7 @@ relative to `web/`, not to this README's location.
 - `web/app/api/campaigns/[id]/compile/route.ts` — recompiles the persisted workflow for
   the campaign's current first contact before CALL-E preview approval.
 
-Not yet wired: multi-contact launch and webhook result capture. Those are later phases.
+Phase 3 in the web application now compiles up to ten contacts independently in fake mode,
+reserves durable call-result records, launches each approved call once, and captures
+terminal CALL-E webhook results. Controlled live mode remains limited to one authorized
+test recipient. The engine itself stays stateless and credential-free throughout.
