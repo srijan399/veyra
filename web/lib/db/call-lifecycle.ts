@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, asc, eq, isNull, lte, or } from "drizzle-orm";
 
 import type { SafeCallExecution } from "@/lib/calle/client";
 import type { PreparedCampaignCall } from "@/lib/campaigns/lifecycle";
@@ -55,6 +55,7 @@ export async function reserveCampaignRuns(params: {
   userId: string;
   campaignId: string;
   calls: PreparedCampaignCall[];
+  fromStatus?: "compiled" | "scheduled";
 }): Promise<"reserved" | "already_launched"> {
   return getDb().transaction(async (tx) => {
     const now = new Date();
@@ -65,7 +66,7 @@ export async function reserveCampaignRuns(params: {
         and(
           eq(campaigns.id, params.campaignId),
           eq(campaigns.userId, params.userId),
-          eq(campaigns.status, "compiled"),
+          eq(campaigns.status, params.fromStatus ?? "compiled"),
         ),
       )
       .returning({ id: campaigns.id });
@@ -75,7 +76,9 @@ export async function reserveCampaignRuns(params: {
         .from(campaigns)
         .where(and(eq(campaigns.id, params.campaignId), eq(campaigns.userId, params.userId)))
         .limit(1);
-      if (existing && existing.status !== "compiled") return "already_launched";
+      if (existing && existing.status !== (params.fromStatus ?? "compiled")) {
+        return "already_launched";
+      }
       throw new Error("Campaign is not available for launch");
     }
 
@@ -93,6 +96,60 @@ export async function reserveCampaignRuns(params: {
     );
     return "reserved";
   });
+}
+
+export async function scheduleCampaign(params: {
+  userId: string;
+  campaignId: string;
+  scheduledAt: Date;
+  approvalDigest: string;
+}): Promise<"scheduled" | "already_launched"> {
+  const [claimed] = await getDb()
+    .update(campaigns)
+    .set({
+      status: "scheduled",
+      scheduledAt: params.scheduledAt,
+      approvedAt: new Date(),
+      approvalDigest: params.approvalDigest,
+    })
+    .where(
+      and(
+        eq(campaigns.id, params.campaignId),
+        eq(campaigns.userId, params.userId),
+        eq(campaigns.status, "compiled"),
+      ),
+    )
+    .returning({ id: campaigns.id });
+  return claimed ? "scheduled" : "already_launched";
+}
+
+export async function dueScheduledCampaigns(limit = 5): Promise<
+  Array<{ id: string; userId: string; approvalDigest: string }>
+> {
+  const rows = await getDb()
+    .select({
+      id: campaigns.id,
+      userId: campaigns.userId,
+      approvalDigest: campaigns.approvalDigest,
+    })
+    .from(campaigns)
+    .where(and(eq(campaigns.status, "scheduled"), lte(campaigns.scheduledAt, new Date())))
+    .orderBy(asc(campaigns.scheduledAt), asc(campaigns.id))
+    .limit(Math.max(1, Math.min(limit, 10)));
+
+  return rows.flatMap((row) =>
+    row.approvalDigest ? [{ ...row, approvalDigest: row.approvalDigest }] : [],
+  );
+}
+
+export async function failScheduledCampaign(params: {
+  campaignId: string;
+  message: string;
+}): Promise<void> {
+  await getDb()
+    .update(campaigns)
+    .set({ status: "failed", failureMessage: params.message.slice(0, 500) })
+    .where(and(eq(campaigns.id, params.campaignId), eq(campaigns.status, "scheduled")));
 }
 
 export async function recordCallSubmission(params: {

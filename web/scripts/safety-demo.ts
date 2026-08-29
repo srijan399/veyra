@@ -8,6 +8,7 @@ process.env.CALL_MODE = "fake";
 const draft = parseCallDraft({
   // 555-0100 through 555-0199 are reserved for fictional use in the NANP.
   phone: "+14155550100",
+  locale: "en-IN",
   task:
     "Identify yourself as an AI assistant, ask for permission to continue, stop if permission is declined, and record whether an adviser follow-up is wanted.",
   resultSchema: {

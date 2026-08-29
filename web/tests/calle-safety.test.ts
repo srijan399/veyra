@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertScheduledCallReady,
   executeApprovedCall,
   getCallMode,
 } from "../lib/calle/client";
@@ -26,6 +27,7 @@ const schema = {
 
 const draft = {
   phone: "+14155550100",
+  locale: "en-IN",
   task: "Disclose that this is an AI assistant, request consent, and stop if declined.",
   resultSchema: schema,
   metadata: { campaignName: "Reserved-number test" },
@@ -102,6 +104,7 @@ test("preview digest is canonical and bound to all approved content", async () =
       metadata: { campaignName: "Reserved-number test" },
       task: draft.task,
       phone: draft.phone,
+      locale: draft.locale,
     }),
     "fake",
   );
@@ -113,6 +116,12 @@ test("preview digest is canonical and bound to all approved content", async () =
 
   assert.equal(first.approvalDigest, reordered.approvalDigest);
   assert.notEqual(first.approvalDigest, changed.approvalDigest);
+  const changedLocale = await createCallPreview(
+    "user-1",
+    parseCallDraft({ ...draft, locale: "en-US" }),
+    "fake",
+  );
+  assert.notEqual(first.approvalDigest, changedLocale.approvalDigest);
   assert.equal(first.callCount, 1);
   assert.equal(first.canCancelAfterDispatch, false);
   assert.deepEqual(first.sideEffects, [
@@ -194,6 +203,27 @@ test("live execution fails closed before loading the SDK", async () => {
       await assert.rejects(
         () => executeApprovedCall(parsed, preview),
         /only permits the configured test recipient/,
+      );
+    },
+  );
+});
+
+test("a scheduled live call must remain inside the live safety window", async () => {
+  const start = new Date(Date.now() - 60_000).toISOString();
+  const end = new Date(Date.now() + 60_000).toISOString();
+  await withEnvironment(
+    {
+      CALL_MODE: "live",
+      CALLE_LIVE_ENABLED: "true",
+      CALLE_API_KEY: "present",
+      CALLE_TEST_RECIPIENT_E164: draft.phone,
+      CALLE_LIVE_WINDOW_START: start,
+      CALLE_LIVE_WINDOW_END: end,
+    },
+    () => {
+      assert.throws(
+        () => assertScheduledCallReady(parseCallDraft(draft), new Date(Date.now() + 120_000)),
+        /inside the configured live call window/,
       );
     },
   );

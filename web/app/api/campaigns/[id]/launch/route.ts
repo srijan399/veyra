@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 
 import {
   assertApprovedCallReady,
-  executeApprovedCall,
+  assertScheduledCallReady,
   getCallMode,
   CallConfigurationError,
 } from "@/lib/calle/client";
@@ -16,11 +16,8 @@ import {
   parseCampaignLaunchApproval,
 } from "@/lib/campaigns/lifecycle";
 import { compileAndPrepareCampaign } from "@/lib/campaigns/server";
-import {
-  recordCallSubmission,
-  recordSubmissionFailure,
-  reserveCampaignRuns,
-} from "@/lib/db/call-lifecycle";
+import { dispatchPreparedCampaign } from "@/lib/campaigns/dispatch";
+import { scheduleCampaign } from "@/lib/db/call-lifecycle";
 import { campaigns, contacts, workflows } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { EngineError } from "@/lib/engine-client";
@@ -46,7 +43,13 @@ export async function POST(request: Request, context: Params) {
     const approval = parseCampaignLaunchApproval(await readCallJson(request));
     const loaded = await withRLS(auth.user.id, async (tx) => {
       const [campaign] = await tx
-        .select({ workflowId: campaigns.workflowId, name: campaigns.name, status: campaigns.status })
+        .select({
+          workflowId: campaigns.workflowId,
+          name: campaigns.name,
+          status: campaigns.status,
+          locale: campaigns.locale,
+          scheduledAt: campaigns.scheduledAt,
+        })
         .from(campaigns)
         .where(eq(campaigns.id, id))
         .limit(1);
@@ -98,6 +101,8 @@ export async function POST(request: Request, context: Params) {
       workflow: loaded.workflow,
       contacts: loaded.contacts,
       mode,
+      locale: loaded.locale === "en-US" ? "en-US" : "en-IN",
+      scheduledAt: loaded.scheduledAt?.toISOString() ?? null,
     });
     if (!sameDigest(approval.approvalDigest, prepared.preview.approvalDigest)) {
       return NextResponse.json(
@@ -118,57 +123,50 @@ export async function POST(request: Request, context: Params) {
       );
     }
 
-    for (const call of prepared.calls) {
-      assertApprovedCallReady(call.draft, call.preview);
+    if (loaded.scheduledAt && loaded.scheduledAt.getTime() > Date.now()) {
+      for (const call of prepared.calls) {
+        // Fail closed at approval time as well as at scheduled dispatch time.
+        assertApprovedCallReady(call.draft, call.preview);
+        assertScheduledCallReady(call.draft, loaded.scheduledAt);
+      }
+      const scheduled = await scheduleCampaign({
+        userId: auth.user.id,
+        campaignId: id,
+        scheduledAt: loaded.scheduledAt,
+        approvalDigest: prepared.preview.approvalDigest,
+      });
+      if (scheduled === "already_launched") {
+        return NextResponse.json(
+          { error: "Campaign was already scheduled or launched" },
+          { status: 409 },
+        );
+      }
+      return NextResponse.json(
+        {
+          campaignId: id,
+          mode,
+          status: "scheduled",
+          scheduledAt: loaded.scheduledAt.toISOString(),
+          runs: [],
+        },
+        { status: 202 },
+      );
     }
 
-    const reservation = await reserveCampaignRuns({
+    const dispatch = await dispatchPreparedCampaign({
       userId: auth.user.id,
       campaignId: id,
-      calls: prepared.calls,
+      prepared,
     });
-    if (reservation === "already_launched") {
+    if (dispatch.status === "already_launched") {
       return NextResponse.json(
         { error: "Campaign was already launched; no calls were submitted again" },
         { status: 409 },
       );
     }
 
-    const runs = [];
-    for (const call of prepared.calls) {
-      try {
-        const execution = await executeApprovedCall(call.draft, call.preview);
-        await recordCallSubmission({
-          campaignId: id,
-          callResultId: call.callResultId,
-          execution,
-        });
-        runs.push({
-          id: call.callResultId,
-          contactId: call.contact.id,
-          status: execution.status,
-          calleCallId: execution.callId,
-          capturedData: execution.structuredResult,
-          qualified:
-            typeof execution.structuredResult?.qualified === "boolean"
-              ? execution.structuredResult.qualified
-              : null,
-        });
-      } catch {
-        await recordSubmissionFailure({ campaignId: id, callResultId: call.callResultId });
-        runs.push({
-          id: call.callResultId,
-          contactId: call.contact.id,
-          status: "submission_uncertain",
-          calleCallId: null,
-          capturedData: null,
-          qualified: null,
-        });
-      }
-    }
-
     return NextResponse.json(
-      { campaignId: id, mode, runs },
+      { campaignId: id, mode, runs: dispatch.runs },
       { status: mode === "live" ? 202 : 200 },
     );
   } catch (error) {

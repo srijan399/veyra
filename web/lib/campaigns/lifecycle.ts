@@ -6,11 +6,14 @@ import {
   type SafeCallPreview,
 } from "@/lib/calle/safety";
 import type {
+  CampaignLocale,
   CampaignLaunchPreview,
   Contact,
 } from "@/types/campaign";
+import { CAMPAIGN_LOCALES, CAMPAIGN_LOCALE_LABELS } from "@/types/campaign";
 
 export const MAX_CAMPAIGN_CONTACTS = 10;
+export const MAX_SCHEDULE_AHEAD_MS = 7 * 24 * 60 * 60 * 1_000;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const METADATA_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
@@ -32,6 +35,8 @@ export interface CampaignContactInput {
 export interface CampaignPreviewInput {
   name: string;
   contacts: CampaignContactInput[];
+  locale: CampaignLocale;
+  scheduledAt: string | null;
 }
 
 export interface CampaignLaunchApproval {
@@ -70,11 +75,31 @@ function onlyKeys(
 export function parseCampaignPreviewInput(value: unknown): CampaignPreviewInput {
   if (!isObject(value)) throw new CampaignLifecycleError(["request body must be an object"]);
   const issues: string[] = [];
-  onlyKeys(value, ["name", "contacts"], "request", issues);
+  onlyKeys(value, ["name", "contacts", "locale", "scheduledAt"], "request", issues);
 
   const name = typeof value.name === "string" ? value.name.trim() : "";
   if (name.length < 3 || name.length > 120) {
     issues.push("name must contain 3 to 120 characters");
+  }
+
+  const locale = typeof value.locale === "string" ? value.locale : "en-IN";
+  if (!CAMPAIGN_LOCALES.includes(locale as CampaignLocale)) {
+    issues.push(`locale must be one of: ${CAMPAIGN_LOCALES.join(", ")}`);
+  }
+
+  let scheduledAt: string | null = null;
+  if (value.scheduledAt !== undefined && value.scheduledAt !== null && value.scheduledAt !== "") {
+    const parsed = typeof value.scheduledAt === "string" ? Date.parse(value.scheduledAt) : Number.NaN;
+    const now = Date.now();
+    if (!Number.isFinite(parsed)) {
+      issues.push("scheduledAt must be a valid ISO-8601 timestamp or null");
+    } else if (parsed <= now) {
+      issues.push("scheduledAt must be in the future");
+    } else if (parsed - now > MAX_SCHEDULE_AHEAD_MS) {
+      issues.push("scheduledAt must be no more than 7 days in the future");
+    } else {
+      scheduledAt = new Date(parsed).toISOString();
+    }
   }
 
   const rawContacts = Array.isArray(value.contacts) ? value.contacts : [];
@@ -131,7 +156,7 @@ export function parseCampaignPreviewInput(value: unknown): CampaignPreviewInput 
   });
 
   if (issues.length) throw new CampaignLifecycleError(issues);
-  return { name, contacts };
+  return { name, contacts, locale: locale as CampaignLocale, scheduledAt };
 }
 
 export function parseCampaignLaunchApproval(value: unknown): CampaignLaunchApproval {
@@ -185,6 +210,8 @@ export async function prepareCampaignLaunch(params: {
   userId: string;
   campaignId: string;
   mode: CallMode;
+  locale: CampaignLocale;
+  scheduledAt: string | null;
   calls: Array<{ contact: Contact; draft: SafeCallDraft }>;
 }): Promise<PreparedCampaignLaunch> {
   if (!params.calls.length || params.calls.length > MAX_CAMPAIGN_CONTACTS) {
@@ -215,6 +242,8 @@ export async function prepareCampaignLaunch(params: {
     userId: params.userId,
     campaignId: params.campaignId,
     mode: params.mode,
+    locale: params.locale,
+    scheduledAt: params.scheduledAt,
     calls: calls.map((call) => ({
       contactId: call.contact.id,
       approvalDigest: call.preview.approvalDigest,
@@ -227,12 +256,16 @@ export async function prepareCampaignLaunch(params: {
       campaignId: params.campaignId,
       mode: params.mode,
       callCount: calls.length,
+      locale: params.locale,
+      localeLabel: CAMPAIGN_LOCALE_LABELS[params.locale],
+      scheduledAt: params.scheduledAt,
       recipients: calls.map((call) => ({
         contactId: call.contact.id,
         name: call.contact.name,
         maskedPhone: call.preview.maskedPhone,
         task: call.preview.task,
         resultSchema: call.preview.resultSchema,
+        locale: call.draft.locale,
       })),
       sideEffects:
         params.mode === "fake"

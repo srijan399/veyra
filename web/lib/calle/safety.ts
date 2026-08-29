@@ -2,6 +2,7 @@ import {
   assertCalleSchemaSubset,
   CalleSchemaError,
 } from "@/lib/validation";
+import { CAMPAIGN_LOCALES, type CampaignLocale } from "@/types/campaign";
 
 export type CallMode = "fake" | "live";
 export type JsonObject = Record<string, unknown>;
@@ -14,6 +15,7 @@ const MAX_METADATA_VALUE_LENGTH = 240;
 
 export interface SafeCallDraft {
   phone: string;
+  locale: CampaignLocale;
   task: string;
   resultSchema: JsonObject;
   metadata?: Record<string, string>;
@@ -109,11 +111,16 @@ export function parseCallDraft(value: unknown): SafeCallDraft {
     throw new SafeCallInputError(["request body must be a JSON object"]);
   }
 
-  onlyKeys(value, ["phone", "task", "resultSchema", "metadata"], "request", issues);
+  onlyKeys(value, ["phone", "locale", "task", "resultSchema", "metadata"], "request", issues);
 
   const phone = typeof value.phone === "string" ? value.phone : "";
   if (!isE164(phone)) {
     issues.push("phone must use strict E.164 format, for example +14155550100");
+  }
+
+  const locale = typeof value.locale === "string" ? value.locale : "";
+  if (!CAMPAIGN_LOCALES.includes(locale as CampaignLocale)) {
+    issues.push(`locale must be one of: ${CAMPAIGN_LOCALES.join(", ")}`);
   }
 
   const task = typeof value.task === "string" ? value.task.trim() : "";
@@ -138,6 +145,7 @@ export function parseCallDraft(value: unknown): SafeCallDraft {
 
   return {
     phone,
+    locale: locale as CampaignLocale,
     task,
     resultSchema: resultSchema as JsonObject,
     ...(metadata && Object.keys(metadata).length ? { metadata } : {}),
@@ -152,7 +160,7 @@ export function parseApprovedCallRequest(value: unknown): ApprovedCallRequest {
   const issues: string[] = [];
   onlyKeys(
     value,
-    ["phone", "task", "resultSchema", "metadata", "approval"],
+    ["phone", "locale", "task", "resultSchema", "metadata", "approval"],
     "request",
     issues,
   );
@@ -161,6 +169,7 @@ export function parseApprovedCallRequest(value: unknown): ApprovedCallRequest {
   try {
     draft = parseCallDraft({
       phone: value.phone,
+      locale: value.locale,
       task: value.task,
       resultSchema: value.resultSchema,
       ...(value.metadata === undefined ? {} : { metadata: value.metadata }),
@@ -249,6 +258,7 @@ export async function createCallPreview(
         version: 1,
         userId,
         phone: draft.phone,
+        locale: draft.locale,
         task: draft.task,
         resultSchema: draft.resultSchema,
         metadata: draft.metadata ?? {},

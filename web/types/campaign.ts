@@ -13,6 +13,14 @@ export interface Contact {
   metadata?: Record<string, string>;
 }
 
+export const CAMPAIGN_LOCALES = ["en-IN", "en-US"] as const;
+export type CampaignLocale = (typeof CAMPAIGN_LOCALES)[number];
+
+export const CAMPAIGN_LOCALE_LABELS: Record<CampaignLocale, string> = {
+  "en-IN": "Indian English",
+  "en-US": "US English",
+};
+
 /**
  * The flattened Calls API request produced by lib/compiler.ts. One is built per
  * contact at dispatch time — see TECHNICAL_ARCH.md section 4.3.
@@ -28,6 +36,7 @@ export interface CalleCallRequest {
 export type CampaignStatus =
   | "draft"
   | "compiled"
+  | "scheduled"
   | "launching"
   | "launched"
   | "completed"
@@ -38,7 +47,9 @@ export interface Campaign {
   workflowId: string;
   name: string;
   status: CampaignStatus;
+  locale: CampaignLocale;
   contacts: Contact[];
+  scheduledAt?: string;
   /** Set once the workflow has been compiled for this campaign. */
   compiledAt?: string;
   createdAt: string;
@@ -82,12 +93,16 @@ export interface CampaignRecipientPreview {
   maskedPhone: string;
   task: string;
   resultSchema: Record<string, unknown>;
+  locale: CampaignLocale;
 }
 
 export interface CampaignLaunchPreview {
   campaignId: string;
   mode: "fake" | "live";
   callCount: number;
+  locale: CampaignLocale;
+  localeLabel: string;
+  scheduledAt: string | null;
   recipients: CampaignRecipientPreview[];
   sideEffects: string[];
   recipientAuthorizationRequired: boolean;
@@ -98,5 +113,7 @@ export interface CampaignLaunchPreview {
 export interface CampaignDraft {
   workflow: Workflow;
   name: string;
+  locale: CampaignLocale;
+  scheduledAt: string | null;
   contacts: Contact[];
 }

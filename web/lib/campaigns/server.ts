@@ -4,7 +4,7 @@ import { createSafeDraftFromCompiled, calleWebhookUrl } from "@/lib/campaigns/co
 import { prepareCampaignLaunch } from "@/lib/campaigns/lifecycle";
 import { compileWorkflow } from "@/lib/engine-client";
 import type { CallMode } from "@/lib/calle/safety";
-import type { Contact } from "@/types/campaign";
+import type { CampaignLocale, Contact } from "@/types/campaign";
 import type { Workflow } from "@/types/workflow";
 
 export async function compileAndPrepareCampaign(params: {
@@ -14,6 +14,8 @@ export async function compileAndPrepareCampaign(params: {
   workflow: Workflow;
   contacts: Contact[];
   mode: CallMode;
+  locale: CampaignLocale;
+  scheduledAt: string | null;
 }) {
   const compiled = await Promise.all(
     params.contacts.map((contact) =>
@@ -27,7 +29,12 @@ export async function compileAndPrepareCampaign(params: {
   );
   const calls = compiled.map((request, index) => ({
     contact: params.contacts[index],
-    draft: createSafeDraftFromCompiled(request, params.campaignName, params.contacts[index]),
+    draft: createSafeDraftFromCompiled(
+      request,
+      params.campaignName,
+      params.contacts[index],
+      params.locale,
+    ),
   }));
   return {
     compiled,
@@ -35,6 +42,8 @@ export async function compileAndPrepareCampaign(params: {
       userId: params.userId,
       campaignId: params.campaignId,
       mode: params.mode,
+      locale: params.locale,
+      scheduledAt: params.scheduledAt,
       calls,
     }),
   };

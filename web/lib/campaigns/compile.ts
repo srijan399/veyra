@@ -1,6 +1,6 @@
 import { parseCallDraft, type SafeCallDraft } from "@/lib/calle/safety";
 import { publicCalleWebhookUrl } from "@/lib/calle/webhook-url";
-import type { CalleCallRequest, Contact } from "@/types/campaign";
+import type { CalleCallRequest, CampaignLocale, Contact } from "@/types/campaign";
 
 const CAMPAIGN_NAME_MAX = 120;
 const CONTACT_NAME_MAX = 120;
@@ -102,6 +102,7 @@ export function parseCampaignCompileInput(value: unknown): CampaignCompileInput 
   try {
     parseCallDraft({
       phone: phoneNumber,
+      locale: "en-IN",
       task: "Validate this contact phone number before compiling the campaign call.",
       resultSchema: {
         type: "object",
@@ -130,9 +131,11 @@ export function createSafeDraftFromCompiled(
   compiled: CalleCallRequest,
   campaignName: string,
   contact: Contact,
+  locale: CampaignLocale,
 ): SafeCallDraft {
   return parseCallDraft({
     phone: contact.phoneNumber,
+    locale,
     task: compiled.task,
     resultSchema: compiled.result_schema,
     metadata: {
