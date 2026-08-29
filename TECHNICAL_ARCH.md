@@ -173,8 +173,10 @@ id: string;
 workflowId: string;
 compiledRequest?: CalleCallRequest; the flattened Calls API request, once compiled (section 4)
 name: string;
-status: "draft" | "compiled" | "launched" | "completed";
+status: "draft" | "compiled" | "scheduled" | "launching" | "launched" | "completed" | "failed";
+locale: "en-IN" | "en-US"; CALL-E BCP-47 conversation locale, Indian English by default
 contacts: Contact[];
+scheduledAt?: string; optional approved dispatch time
 createdAt: string;
 launchedAt?: string;
 }
@@ -235,6 +237,11 @@ workflow_id uuid references workflows(id),
 compiled_request jsonb, the flattened Calls API request, once compiled
 name text not null,
 status text not null default 'draft',
+locale text not null default 'en-IN',
+scheduled_at timestamptz,
+approved_at timestamptz,
+approval_digest text,
+failure_message text,
 created_at timestamptz default now(),
 launched_at timestamptz
 );
@@ -853,7 +860,7 @@ async function launchCampaign(campaignId: string) {
     await calle.calls.create(
       {
         task: request.task,                       // personalized for this contact
-        recipient: { phones: [contact.phoneNumber] },
+        recipient: { phone: contact.phoneNumber, locale: campaign.locale },
         resultSchema: request.result_schema,
         metadata: { campaignId, contactId: contact.id },
         webhookUrl: `${process.env.APP_URL}/api/calle/webhook`,
@@ -877,6 +884,21 @@ workflows that only need a target number of confirmations rather than calling ev
 contact. Worth a mention in the Campaign Builder UI if time allows, but do not build it
 for the hackathon, and note that the lack of a cancel operation makes small waves a
 sensible safety habit regardless (section 13).
+
+### 8.2.1 Locale and scheduled dispatch
+
+The Calls SDK accepts a BCP-47 `recipient.locale`, not a selectable provider voice id.
+Veyra therefore labels `en-IN` as Indian English without promising a particular speaker.
+Locale and `scheduled_at` are part of the batch approval digest, so either changing after
+preview requires a new approval.
+
+Scheduling is a durable server operation, never a browser timer. Approval moves a campaign
+from `compiled` to `scheduled`; the bearer-secret-protected `GET /api/cron/campaigns` worker
+loads due rows, recompiles the locked workflow and contacts, compares the stored digest in
+constant time, rechecks all live gates, atomically claims the campaign, and then uses the
+same one-submission dispatch path as immediate launch. A changed digest or expired live
+window fails closed. Vercel Hobby's once-daily cron is too coarse, so scheduling stays
+environment-gated and immediate launch remains the default deployment mode.
 
 ### 8.3 Results Capture (web/app/api/calle/webhook/route.ts)
 
@@ -963,13 +985,18 @@ outcomes (section 4.8), and the dashboard is on camera during the demo.
 /api/campaigns POST create a campaign from a compiled workflow + contacts
 /api/campaigns/[id]/launch POST create one idempotent CALL-E call per contact in the campaign
 /api/campaigns/[id]/results GET fetch structured call results for a campaign
+/api/campaigns/[id]/results/export GET download owned results as spreadsheet-safe CSV
+/api/cron/campaigns GET bearer-secret worker for due scheduled campaigns
+/api/health GET verify the web deployment can reach engine /health
 /api/calle/webhook POST receive terminal call events from CALL-E (public, unsigned, deduplicated)
 
-Every route above except the webhook requires an authenticated user and must open with
+Every user-facing route above requires an authenticated user and must open with
 `requireUser()` from `web/lib/supabase/auth.ts`. Inserts set `user_id` explicitly; reads,
-updates and deletes are scoped by RLS. The webhook is the sole exception: it has no user
-session, runs under the service role, and is a public untrusted-input boundary. See the
-Authentication section.
+updates and deletes are scoped by RLS. The webhook has no session and authenticates its
+secret delivery URL plus event correlation. The cron route uses `CRON_SECRET` and the
+health route is public but exposes only component status. Server lifecycle writers use the
+database owner only after those boundaries have correlated an owned campaign or known call
+run. See the Authentication section.
 
 ---
 
@@ -984,6 +1011,8 @@ APP_URL=                 # public base URL used to build webhook_url
 NEXT_PUBLIC_SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=          # bypasses RLS, webhook route only
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+CAMPAIGN_SCHEDULING_ENABLED=false  # opt in only with a frequent production scheduler
+CRON_SECRET=                       # bearer secret for /api/cron/campaigns
 
 `engine/` has its own `GEMINI_API_KEY` / `GEMINI_MODEL` / `ENGINE_SHARED_SECRET` in
 `engine/.env.example` — it is a separate service with its own env file, not a section of

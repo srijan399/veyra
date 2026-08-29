@@ -70,6 +70,51 @@ Apply the Phase 3 database migration before using launch or results:
 pnpm db:migrate
 ```
 
+### Phase 4: locale setup, scheduling, export, and deployment readiness
+
+Campaign setup now defaults to **Indian English (`en-IN`)** and also offers US English
+(`en-US`). CALL-E's Calls SDK exposes a BCP-47 conversation locale rather than a proprietary
+voice id, so the selected value is persisted, shown in the exact preview, included in the
+approval digest, and sent as `recipient.locale`. Changing it invalidates approval.
+
+An optional start time can be approved up to seven days ahead. Scheduled campaigns are
+locked, recomputed at dispatch, and submitted only if their stored approval digest, call
+mode, compiler output, live recipient, and live safety window still match. The secured
+`GET /api/cron/campaigns` worker requires `Authorization: Bearer $CRON_SECRET`; it never
+automatically retries uncertain provider submissions.
+
+Set these only on a deployment with a scheduler that runs often enough:
+
+```env
+CAMPAIGN_SCHEDULING_ENABLED=true
+CRON_SECRET=<at-least-16-random-characters>
+```
+
+Vercel Hobby Cron runs only once per day and is not suitable for precise call scheduling.
+For a Vercel plan that supports frequent cron invocations, add this to `web/vercel.json`:
+
+```json
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [{ "path": "/api/cron/campaigns", "schedule": "*/5 * * * *" }]
+}
+```
+
+Keep `CAMPAIGN_SCHEDULING_ENABLED=false` and leave the start time empty for the hackathon
+demo unless that scheduler is configured. Immediate launch remains fully supported.
+
+Results can be downloaded from the campaign screen through the authenticated,
+spreadsheet-injection-safe CSV export. `GET /api/health` verifies that the Vercel web app
+can reach the engine, while Render continues to use the engine's unauthenticated `/health`.
+The repository-root `render.yaml` records the correct Render build, `$PORT`, and health
+settings.
+
+Apply the Phase 4 migration before opening a campaign from this version:
+
+```bash
+pnpm db:migrate
+```
+
 ### Routes
 
 - `POST /api/workflows/[id]/compile` validates/saves the edited workflow and creates an
@@ -80,15 +125,20 @@ pnpm db:migrate
 - `POST /api/campaigns/[id]/launch` recompiles the saved campaign, verifies the exact
   approval, reserves durable runs, and submits each call once.
 - `GET /api/campaigns/[id]/results` returns the owned campaign status and durable results.
+- `GET /api/campaigns/[id]/results/export` downloads owned results as safe CSV.
+- `GET /api/cron/campaigns` dispatches due approved schedules with `CRON_SECRET`.
+- `GET /api/health` checks the deployed web-to-engine connection without exposing secrets.
 - `POST /api/calle/webhook` accepts secret-token-authorized terminal CALL-E events and
   processes each event id once.
 - `POST /api/calls/preview` validates a one-call draft and returns an approval-bound preview.
 - `POST /api/calls` recomputes that preview for the authenticated user and submits it once.
 
-All four routes require a Supabase session and JSON content. Requests are limited to 32 KB,
-phone numbers must be strict E.164, schemas must use CALL-E's supported subset, and unknown
-request fields are rejected. There is intentionally no automatic retry: the stable,
-content-bound idempotency key is reused for the single SDK submission.
+All user-facing campaign and call routes require a Supabase session. The webhook uses its
+delivery token and event correlation; the cron worker uses `CRON_SECRET`; health is public
+and returns no secrets. JSON mutation requests are limited to 32 KB, phone numbers must be
+strict E.164, schemas must use CALL-E's supported subset, and unknown request fields are
+rejected. There is intentionally no automatic retry: the stable, content-bound idempotency
+key is reused for the single SDK submission.
 
 ### Enabling a controlled live test
 

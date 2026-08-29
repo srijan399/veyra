@@ -70,7 +70,7 @@ export async function POST(request: Request, context: Params) {
     });
     // A malformed goal is rejected by the engine above before this string helper runs.
     const name = campaignNameFromGoal(workflow.goal);
-    const draft = createSafeDraftFromCompiled(compiled, name, contact);
+    const draft = createSafeDraftFromCompiled(compiled, name, contact, "en-IN");
     const compiledAt = new Date();
 
     await withRLS(auth.user.id, async (tx) => {
@@ -88,6 +88,7 @@ export async function POST(request: Request, context: Params) {
         compiledRequest: compiled,
         name,
         status: "compiled",
+        locale: "en-IN",
       });
       await tx.insert(contacts).values({
         id: contactId,

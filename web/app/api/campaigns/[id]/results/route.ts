@@ -16,7 +16,11 @@ export async function GET(_request: Request, context: Params) {
 
   const loaded = await withRLS(auth.user.id, async (tx) => {
     const [campaign] = await tx
-      .select({ status: campaigns.status })
+      .select({
+        status: campaigns.status,
+        scheduledAt: campaigns.scheduledAt,
+        failureMessage: campaigns.failureMessage,
+      })
       .from(campaigns)
       .where(eq(campaigns.id, id))
       .limit(1);
@@ -44,6 +48,8 @@ export async function GET(_request: Request, context: Params) {
 
     return {
       status: campaign.status as CampaignStatus,
+      scheduledAt: campaign.scheduledAt?.toISOString() ?? null,
+      failureMessage: campaign.failureMessage,
       results: rows.map(
         (row): CallResult => ({
           id: row.id,

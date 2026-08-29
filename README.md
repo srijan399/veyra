@@ -32,17 +32,24 @@ The workflow graph is Veyra's own authoring and editing abstraction. CALL-E does
 
 ## Implementation Status
 
-The repository is being delivered in phases. **Phases 1 and 2 are implemented.** Phase 1
+The repository is being delivered in phases. **Phases 1 through 4 are implemented.** Phase 1
 provides an authenticated, one-contact CALL-E execution boundary with strict E.164
 validation, an exact masked preview, explicit approval, a content-bound idempotency key,
 a fake-by-default adapter, and guarded live mode. Phase 2 connects the editable workflow
 to the Python compiler, persists the compiled campaign and first contact under Supabase
 RLS, reloads that campaign, and recompiles contact edits before every preview. The
-credential-free `pnpm demo` places zero real calls. See `web/README.md` for the runbook.
+credential-free `pnpm demo` places zero real calls. Phase 3 persists and compiles up to ten
+contacts, binds one approval to the exact personalized batch, reserves durable call runs,
+submits every run once without automatic retries, processes deduplicated terminal CALL-E
+webhooks, and displays structured results and transcripts. See `web/README.md` for the
+runbook. Phase 4 adds approval-bound Indian English (`en-IN`) and US English locale setup,
+optional durable scheduling through a secured server dispatcher, authenticated CSV result
+export, a web-to-engine health endpoint, and a Render Blueprint. Precise Vercel scheduling
+requires a plan that supports frequent Cron Jobs; immediate launch remains the default.
 
-The multi-contact campaign launcher, webhook result capture, results dashboard, deployment,
-and recorded real-call proof described below are the target product and belong to later
-phases; they are not claimed as complete yet.
+The repository now contains the complete deployable path. A real authorized call and the
+public demo recording are operational submission proof and cannot be produced by a
+credential-free repository test.
 
 ## System Architecture
 
@@ -200,13 +207,17 @@ Potential monetization paths worth mentioning in the pitch, even briefly, since 
 
 **Technical Implementation (current compiler path).** The edited graph is compiled by the credential-free Python engine into a personalized task and result schema. The owned workflow, campaign, first contact, and compiled request are persisted under Postgres RLS. Contact data is explicitly marked as untrusted data in the generated instruction, and every preview recompiles and revalidates the current recipient before entering the Phase 1 approval boundary.
 
-**Technical Implementation (planned).** Later phases will dispatch one approved request per authorized contact and capture terminal outcomes webhook-first with event deduplication and explicit handling of null structured results.
+**Technical Implementation (current lifecycle).** Phase 3 dispatches one independently compiled request per approved contact, creates the durable call record before submission, and never automatically retries an uncertain submission. Terminal outcomes are captured webhook-first with secret delivery URLs, event-id deduplication, correlation checks, explicit null structured-result handling, and persistent summaries/transcripts. Phase 4 binds the CALL-E locale and optional start time into the exact approval, safely dispatches due schedules through an idempotent authenticated worker, and exports owned results as spreadsheet-safe CSV.
 
 **Creativity and Originality.** The generation layer turns a plain-English description of a calling process into an editable conversation graph with branching, qualification scoring, and a structured output schema. The graph is Veyra's authoring abstraction, flattened at compile time rather than shipped to CALL-E, which is what lets a non-technical user edit call logic visually and still get a well-formed single-task call.
 
 **Real World Impact.** The same engine generates wealth management, education, and insurance qualification workflows from different prompts, targeting teams that today either staff manual calling floors or hand-build a voice agent per campaign.
 
-**Presentation target.** The final demo should run the full path on camera: prompt in, workflow generated and edited, compiled to a Calls API request, one authorized real call placed, and a structured result returned to the dashboard. Phases 1 and 2 currently demonstrate prompt-to-persisted-compile, exact preview/approval, and a credential-free fake result.
+**Presentation target.** The final demo should run the full path on camera: prompt in,
+workflow generated and edited, a campaign compiled and approved, one authorized real call
+placed, and its webhook-backed structured result returned to the dashboard. Phase 4 now
+supports that deployed path; the remaining work is to run and record it with the team's
+authorized CALL-E recipient and production credentials.
 
 ## Our Submission Checklist
 

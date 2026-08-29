@@ -61,6 +61,11 @@ create table if not exists public.campaigns (
   compiled_request jsonb,
   name text not null,
   status text not null default 'draft',
+  locale text not null default 'en-IN',
+  scheduled_at timestamptz,
+  approved_at timestamptz,
+  approval_digest text,
+  failure_message text,
   created_at timestamptz default now(),
   launched_at timestamptz
 );

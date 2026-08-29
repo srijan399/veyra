@@ -82,8 +82,9 @@ test("campaign compile input is strict, trimmed, and E.164-only", () => {
 });
 
 test("compiled engine output becomes a Phase 1 draft with durable correlation", () => {
-  const draft = createSafeDraftFromCompiled(compiled, "Wealth inbound", contact);
+  const draft = createSafeDraftFromCompiled(compiled, "Wealth inbound", contact, "en-IN");
   assert.equal(draft.phone, contact.phoneNumber);
+  assert.equal(draft.locale, "en-IN");
   assert.equal(draft.task, compiled.task);
   assert.deepEqual(draft.resultSchema, compiled.result_schema);
   assert.deepEqual(draft.metadata, {
@@ -104,6 +105,7 @@ test("invalid compiler schemas are stopped before preview or CALL-E", () => {
         },
         "Wealth inbound",
         contact,
+        "en-IN",
       ),
     /CALL-E compatible/,
   );

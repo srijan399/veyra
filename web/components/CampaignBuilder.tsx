@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type {
+  CampaignLocale,
   CallResult,
   CampaignLaunchPreview,
   CampaignStatus,
@@ -49,28 +50,46 @@ function terminal(status: CampaignStatus): boolean {
   return status === "completed" || status === "failed";
 }
 
+function localDateTimeValue(value: string | null): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
 interface CampaignBuilderProps {
   campaignId: string;
   workflowId: string;
   initialName: string;
+  initialLocale: CampaignLocale;
+  initialScheduledAt: string | null;
   initialContacts: Contact[];
   initialCsv: string;
   stepCount: number;
   initialStatus: CampaignStatus;
   initialResults: CallResult[];
+  schedulingEnabled: boolean;
+  initialFailureMessage: string | null;
 }
 
 export default function CampaignBuilder({
   campaignId,
   workflowId,
   initialName,
+  initialLocale,
+  initialScheduledAt,
   initialContacts,
   initialCsv,
   stepCount,
   initialStatus,
   initialResults,
+  schedulingEnabled,
+  initialFailureMessage,
 }: CampaignBuilderProps) {
   const [name, setName] = useState(initialName);
+  const [locale, setLocale] = useState<CampaignLocale>(initialLocale);
+  const [scheduleLocal, setScheduleLocal] = useState(localDateTimeValue(initialScheduledAt));
   const [contacts, setContacts] = useState(initialContacts);
   const [entry, setEntry] = useState<Entry>("rows");
   const [csv, setCsv] = useState(initialCsv);
@@ -81,6 +100,8 @@ export default function CampaignBuilder({
   const [error, setError] = useState<string | null>(null);
   const [campaignStatus, setCampaignStatus] = useState(initialStatus);
   const [results, setResults] = useState(initialResults);
+  const [scheduledAt, setScheduledAt] = useState(initialScheduledAt);
+  const [failureMessage, setFailureMessage] = useState(initialFailureMessage);
 
   const locked = campaignStatus !== "compiled";
   const csvLines = csv.split("\n").filter((line) => line.trim()).length;
@@ -98,13 +119,26 @@ export default function CampaignBuilder({
     });
     const body: unknown = await response.json();
     if (!response.ok) throw new Error(errorMessage(body));
-    const loaded = body as { status?: CampaignStatus; results?: CallResult[] };
+    const loaded = body as {
+      status?: CampaignStatus;
+      results?: CallResult[];
+      scheduledAt?: string | null;
+      failureMessage?: string | null;
+    };
     if (loaded.status) setCampaignStatus(loaded.status);
     if (Array.isArray(loaded.results)) setResults(loaded.results);
+    if (loaded.scheduledAt !== undefined) setScheduledAt(loaded.scheduledAt);
+    if (loaded.failureMessage !== undefined) setFailureMessage(loaded.failureMessage);
   }, [campaignId]);
 
   useEffect(() => {
-    if (campaignStatus !== "launching" && campaignStatus !== "launched") return;
+    if (
+      campaignStatus !== "scheduled" &&
+      campaignStatus !== "launching" &&
+      campaignStatus !== "launched"
+    ) {
+      return;
+    }
     const timer = window.setInterval(() => {
       void refreshResults().catch(() => undefined);
     }, 3_000);
@@ -128,7 +162,12 @@ export default function CampaignBuilder({
       const response = await fetch(`/api/campaigns/${campaignId}/preview`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, contacts }),
+        body: JSON.stringify({
+          name,
+          contacts,
+          locale,
+          scheduledAt: scheduleLocal ? new Date(scheduleLocal).toISOString() : null,
+        }),
       });
       const body: unknown = await response.json();
       if (!response.ok) throw new Error(errorMessage(body));
@@ -165,9 +204,12 @@ export default function CampaignBuilder({
       });
       const body: unknown = await response.json();
       if (!response.ok) throw new Error(errorMessage(body));
-      setCampaignStatus(preview.mode === "fake" ? "completed" : "launched");
+      const launch = body as { status?: CampaignStatus };
+      setCampaignStatus(
+        launch.status ?? (preview.mode === "fake" ? "completed" : "launched"),
+      );
       setPreview(null);
-      await refreshResults();
+      if (launch.status !== "scheduled") await refreshResults();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Campaign launch failed.");
     } finally {
@@ -199,7 +241,7 @@ export default function CampaignBuilder({
         </h1>
 
         <div className={`mb-[34px] pt-[22px] ${RULE}`}>
-          <div className={`${KICKER} mb-3`}>01 · Campaign name</div>
+          <div className={`${KICKER} mb-3`}>01 · Campaign setup</div>
           <input
             value={name}
             onChange={(event) => {
@@ -210,6 +252,48 @@ export default function CampaignBuilder({
             maxLength={120}
             className="w-full max-w-[520px] border border-bone/[.26] bg-panel px-3.5 py-3 text-base font-extrabold text-bone outline-none disabled:opacity-50"
           />
+          <div className="mt-5 grid max-w-[700px] gap-5 md:grid-cols-2">
+            <label className="text-xs text-bone/55">
+              <span className="mb-2 block font-extrabold uppercase tracking-[.1em] text-bone/65">
+                Voice &amp; language
+              </span>
+              <select
+                value={locale}
+                onChange={(event) => {
+                  resetApproval();
+                  setLocale(event.target.value as CampaignLocale);
+                }}
+                disabled={locked}
+                className="w-full border border-bone/[.26] bg-panel px-3.5 py-3 text-sm text-bone outline-none disabled:opacity-50"
+              >
+                <option value="en-IN">Indian English (en-IN)</option>
+                <option value="en-US">US English (en-US)</option>
+              </select>
+              <span className="mt-2 block leading-5 text-bone/40">
+                Sent to CALL-E as the conversation locale. Indian English is the default.
+              </span>
+            </label>
+            <label className="text-xs text-bone/55">
+              <span className="mb-2 block font-extrabold uppercase tracking-[.1em] text-bone/65">
+                Start time
+              </span>
+              <input
+                type="datetime-local"
+                value={scheduleLocal}
+                onChange={(event) => {
+                  resetApproval();
+                  setScheduleLocal(event.target.value);
+                }}
+                disabled={locked || !schedulingEnabled}
+                className="w-full border border-bone/[.26] bg-panel px-3.5 py-3 text-sm text-bone outline-none disabled:opacity-50"
+              />
+              <span className="mt-2 block leading-5 text-bone/40">
+                {schedulingEnabled
+                  ? "Leave empty to launch immediately, or choose a time within seven days."
+                  : "Immediate launch only on this deployment; scheduling is disabled."}
+              </span>
+            </label>
+          </div>
         </div>
 
         <div className={`pt-[22px] ${RULE}`}>
@@ -345,6 +429,14 @@ export default function CampaignBuilder({
                     {preview.mode} mode
                   </span>
                   <span className="text-sm text-bone/75">exactly {preview.callCount} call{preview.callCount === 1 ? "" : "s"}</span>
+                  <span className="text-sm text-bone/75">
+                    {preview.localeLabel} ({preview.locale})
+                  </span>
+                  <span className="text-sm text-bone/75">
+                    {preview.scheduledAt
+                      ? `scheduled ${new Date(preview.scheduledAt).toLocaleString()}`
+                      : "launch immediately"}
+                  </span>
                 </div>
 
                 <div className="space-y-3">
@@ -402,7 +494,9 @@ export default function CampaignBuilder({
                     ? "Submitting each call once…"
                     : preview.mode === "fake"
                       ? `Run ${preview.callCount} fake call${preview.callCount === 1 ? "" : "s"}`
-                      : "Place one live call"}
+                      : preview.scheduledAt
+                        ? "Approve and schedule one live call"
+                        : "Place one live call"}
                 </button>
               </section>
             ) : null}
@@ -415,6 +509,12 @@ export default function CampaignBuilder({
           </div>
         ) : null}
 
+        {failureMessage && campaignStatus === "failed" ? (
+          <div role="alert" className="mt-5 border border-red-400/50 bg-red-950/30 p-3 text-sm text-red-200">
+            {failureMessage}
+          </div>
+        ) : null}
+
         {results.length || locked ? (
           <section className={`mt-10 pt-6 ${RULE}`}>
             <div className="mb-4 flex items-center justify-between gap-4">
@@ -423,6 +523,8 @@ export default function CampaignBuilder({
                 <p className="text-[13px] text-bone/55">
                   {terminal(campaignStatus)
                     ? "Every call reached a recorded terminal state."
+                    : campaignStatus === "scheduled"
+                      ? `Approved and scheduled for ${scheduledAt ? new Date(scheduledAt).toLocaleString() : "dispatch"}.`
                     : "Waiting for CALL-E terminal webhooks; this view refreshes automatically."}
                 </p>
               </div>
@@ -433,6 +535,12 @@ export default function CampaignBuilder({
               >
                 Refresh
               </button>
+              <a
+                href={`/api/campaigns/${campaignId}/results/export`}
+                className="border border-bone/[.26] bg-transparent px-3 py-2 text-xs text-bone/70 no-underline"
+              >
+                Export CSV
+              </a>
             </div>
 
             <div className="space-y-3">

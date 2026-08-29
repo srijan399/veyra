@@ -31,6 +31,12 @@ export async function POST(request: Request, context: Params) {
 
   try {
     const input = parseCampaignPreviewInput(await readCallJson(request));
+    if (input.scheduledAt && process.env.CAMPAIGN_SCHEDULING_ENABLED !== "true") {
+      return NextResponse.json(
+        { error: "Campaign scheduling is not enabled on this deployment" },
+        { status: 503 },
+      );
+    }
     const loaded = await withRLS(auth.user.id, async (tx) => {
       const [campaign] = await tx
         .select({ workflowId: campaigns.workflowId, status: campaigns.status })
@@ -85,6 +91,8 @@ export async function POST(request: Request, context: Params) {
       workflow: loaded.workflow,
       contacts: nextContacts,
       mode,
+      locale: input.locale,
+      scheduledAt: input.scheduledAt,
     });
 
     await withRLS(auth.user.id, async (tx) => {
@@ -93,7 +101,16 @@ export async function POST(request: Request, context: Params) {
         .set({
           name: input.name,
           status: "compiled",
-          compiledRequest: { version: 3, calls: compiled },
+          locale: input.locale,
+          scheduledAt: input.scheduledAt ? new Date(input.scheduledAt) : null,
+          approvedAt: null,
+          approvalDigest: null,
+          compiledRequest: {
+            version: 4,
+            locale: input.locale,
+            scheduledAt: input.scheduledAt,
+            calls: compiled,
+          },
         })
         .where(and(eq(campaigns.id, id), eq(campaigns.status, "compiled")))
         .returning({ id: campaigns.id });

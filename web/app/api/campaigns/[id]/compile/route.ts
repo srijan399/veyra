@@ -28,7 +28,11 @@ export async function POST(request: Request, context: Params) {
     const input = parseCampaignCompileInput(await readCallJson(request));
     const loaded = await withRLS(auth.user.id, async (tx) => {
       const [campaign] = await tx
-        .select({ workflowId: campaigns.workflowId, status: campaigns.status })
+        .select({
+          workflowId: campaigns.workflowId,
+          status: campaigns.status,
+          locale: campaigns.locale,
+        })
         .from(campaigns)
         .where(eq(campaigns.id, id))
         .limit(1);
@@ -59,6 +63,7 @@ export async function POST(request: Request, context: Params) {
         workflowId: campaign.workflowId,
         workflow: workflowRow.schema as Workflow,
         contactId: contactRow.id,
+        locale: campaign.locale,
       } as const;
     });
     if (!loaded) {
@@ -78,7 +83,12 @@ export async function POST(request: Request, context: Params) {
       contact,
       webhookUrl: calleWebhookUrl(),
     });
-    const draft = createSafeDraftFromCompiled(compiled, input.name, contact);
+    const draft = createSafeDraftFromCompiled(
+      compiled,
+      input.name,
+      contact,
+      loaded.locale === "en-US" ? "en-US" : "en-IN",
+    );
     const compiledAt = new Date();
 
     await withRLS(auth.user.id, async (tx) => {

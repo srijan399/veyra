@@ -27,6 +27,7 @@ const contacts: Contact[] = [
 function draft(contact: Contact): SafeCallDraft {
   return {
     phone: contact.phoneNumber,
+    locale: "en-IN",
     task: `Identify yourself as an AI and ask ${contact.name} for permission to continue.`,
     resultSchema: {
       type: "object",
@@ -60,6 +61,8 @@ test("campaign approval is stable and covers every personalized call", async () 
     userId: "user-1",
     campaignId,
     mode: "fake" as const,
+    locale: "en-IN" as const,
+    scheduledAt: null,
     calls: contacts.map((contact) => ({ contact, draft: draft(contact) })),
   };
   const first = await prepareCampaignLaunch(input);
@@ -94,9 +97,32 @@ test("live campaigns remain limited to one explicitly authorized recipient", asy
         userId: "user-1",
         campaignId,
         mode: "live",
+        locale: "en-IN",
+        scheduledAt: null,
         calls: contacts.map((contact) => ({ contact, draft: draft(contact) })),
       }),
     /limited to one explicitly authorized test recipient/,
+  );
+});
+
+test("campaign setup validates locale and future schedule", () => {
+  const future = new Date(Date.now() + 60_000).toISOString();
+  const parsed = parseCampaignPreviewInput({
+    name: "Inbound leads",
+    contacts: [contacts[0]],
+    locale: "en-IN",
+    scheduledAt: future,
+  });
+  assert.equal(parsed.locale, "en-IN");
+  assert.equal(parsed.scheduledAt, future);
+  assert.throws(
+    () =>
+      parseCampaignPreviewInput({
+        name: "Inbound leads",
+        contacts: [contacts[0]],
+        locale: "en-GB",
+      }),
+    CampaignLifecycleError,
   );
 });
 

@@ -298,6 +298,10 @@ Copy `web/.env.example` to `web/.env.local` and fill it in. Never commit actual 
   ANON, this is what `web/lib/supabase/*.ts` actually read
 - `APP_URL` - public base URL of this app, used to build the `webhook_url` sent on every
   call. Local development needs a tunnel for CALL-E to reach the webhook.
+- `CAMPAIGN_SCHEDULING_ENABLED` - optional fail-closed switch for durable scheduled
+  dispatch. Leave `false` for immediate-only launch, especially on Vercel Hobby.
+- `CRON_SECRET` - at least 16 random characters, sent as a Bearer token to the server-only
+  `/api/cron/campaigns` worker by the configured scheduler.
 
 `engine/` has its own `.env`/`engine/.env.example` (`GEMINI_API_KEY`, `GEMINI_MODEL`,
 `ENGINE_SHARED_SECRET`) — it is a separate service and does not read this app's

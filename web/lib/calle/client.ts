@@ -32,7 +32,12 @@ function parseLiveTime(name: string): number {
   return parsed;
 }
 
-function liveConfig(expectedPhone: string): { apiKey: string; baseUrl: string } {
+function liveConfig(expectedPhone: string): {
+  apiKey: string;
+  baseUrl: string;
+  windowStart: number;
+  windowEnd: number;
+} {
   if (process.env.CALLE_LIVE_ENABLED !== "true") {
     throw new CallConfigurationError("Live calling is disabled by CALLE_LIVE_ENABLED");
   }
@@ -68,7 +73,18 @@ function liveConfig(expectedPhone: string): { apiKey: string; baseUrl: string } 
     throw new CallConfigurationError("Live credentials may only be sent to the official CALL-E origin");
   }
 
-  return { apiKey, baseUrl: configuredBaseUrl };
+  return { apiKey, baseUrl: configuredBaseUrl, windowStart: start, windowEnd: end };
+}
+
+export function assertScheduledCallReady(draft: SafeCallDraft, scheduledAt: Date): void {
+  if (getCallMode() !== "live") return;
+  const config = liveConfig(draft.phone);
+  const scheduled = scheduledAt.getTime();
+  if (scheduled < config.windowStart || scheduled > config.windowEnd) {
+    throw new CallConfigurationError(
+      "The scheduled call must fall inside the configured live call window",
+    );
+  }
 }
 
 export function assertApprovedCallReady(
@@ -139,11 +155,11 @@ export async function executeApprovedCall(
   // Keep fake mode entirely credential-free and side-effect-free. The official SDK is
   // not loaded until every live gate above has passed.
   const { CalleClient } = await import("@call-e/calle");
-  const client = new CalleClient(config);
+  const client = new CalleClient({ apiKey: config.apiKey, baseUrl: config.baseUrl });
   const call = await client.calls.create(
     {
       task: draft.task,
-      recipient: { phone: draft.phone },
+      recipient: { phone: draft.phone, locale: draft.locale },
       resultSchema: draft.resultSchema,
       ...(typeof draft.metadata?.veyraCallResultId === "string"
         ? { webhookUrl: liveCalleWebhookUrl() }
