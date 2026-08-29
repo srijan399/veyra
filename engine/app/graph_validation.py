@@ -68,9 +68,7 @@ def _check_terminal_nodes(workflow: Workflow, result: ValidationResult) -> None:
         result.errors.append("Workflow has no terminal node")
 
 
-def _check_dangling_edges(
-    workflow: Workflow, node_by_id: dict, result: ValidationResult
-) -> None:
+def _check_dangling_edges(workflow: Workflow, node_by_id: dict, result: ValidationResult) -> None:
     for edge in workflow.edges:
         if edge.from_ not in node_by_id:
             result.errors.append(f'Edge "{edge.id}" references unknown from-node "{edge.from_}"')
@@ -78,9 +76,7 @@ def _check_dangling_edges(
             result.errors.append(f'Edge "{edge.id}" references unknown to-node "{edge.to}"')
 
 
-def _check_reachability(
-    workflow: Workflow, node_by_id: dict, result: ValidationResult
-) -> None:
+def _check_reachability(workflow: Workflow, node_by_id: dict, result: ValidationResult) -> None:
     starts = [n.id for n in workflow.nodes if n.type == "start"]
     if not starts:
         return  # already reported by _check_start_nodes
@@ -100,9 +96,7 @@ def _check_reachability(
 
     unreachable = [n.id for n in workflow.nodes if n.id not in visited]
     if unreachable:
-        result.errors.append(
-            f"Unreachable from start: {', '.join(unreachable)}"
-        )
+        result.errors.append(f"Unreachable from start: {', '.join(unreachable)}")
 
 
 def _check_dead_ends(workflow: Workflow, result: ValidationResult) -> None:

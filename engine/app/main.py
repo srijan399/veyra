@@ -11,7 +11,7 @@ Run with: uvicorn app.main:app --reload --port 8008
 
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI, HTTPException, Header
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, ValidationError
 
 from app.calle_schema import CalleSchemaError
@@ -111,21 +111,32 @@ def edit(request: EditRequest) -> WorkflowWithChecks:
     return _with_checks(edited)
 
 
-@app.post("/workflows/validate", response_model=ValidateResponse)
+@app.post(
+    "/workflows/validate",
+    response_model=ValidateResponse,
+    dependencies=[Depends(require_shared_secret)],
+)
 def validate(request: ValidateRequest) -> ValidateResponse:
     workflow = _parse_workflow(request.workflow)
     result = validate_graph(workflow)
     return ValidateResponse(valid=result.valid, errors=result.errors, warnings=result.warnings)
 
 
-@app.post("/workflows/compile", response_model=CalleCallRequest)
+@app.post(
+    "/workflows/compile",
+    response_model=CalleCallRequest,
+    dependencies=[Depends(require_shared_secret)],
+)
 def compile_endpoint(request: CompileRequest) -> CalleCallRequest:
     workflow = _parse_workflow(request.workflow)
     graph_result = validate_graph(workflow)
     if not graph_result.valid:
         raise HTTPException(
             status_code=422,
-            detail={"message": "Workflow has graph errors, fix before compiling", "errors": graph_result.errors},
+            detail={
+                "message": "Workflow has graph errors, fix before compiling",
+                "errors": graph_result.errors,
+            },
         )
     try:
         return compile_workflow(workflow, request.campaign_id, request.contact, request.webhook_url)

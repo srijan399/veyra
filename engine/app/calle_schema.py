@@ -48,9 +48,7 @@ def assert_calle_schema_subset(schema: Any, path: str = "") -> None:
             raise CalleSchemaError(f'CALL-E does not support "{keyword}"', path)
 
     if schema.get("additionalProperties") is True:
-        raise CalleSchemaError(
-            'CALL-E does not support "additionalProperties: true"', path
-        )
+        raise CalleSchemaError('CALL-E does not support "additionalProperties: true"', path)
 
     schema_type = schema.get("type")
     if not isinstance(schema_type, str):
@@ -77,9 +75,7 @@ def assert_calle_schema_subset(schema: Any, path: str = "") -> None:
     if schema_type == "array":
         items = schema.get("items")
         if isinstance(items, list):
-            raise CalleSchemaError(
-                "CALL-E supports simple array.items only, not tuple forms", path
-            )
+            raise CalleSchemaError("CALL-E supports simple array.items only, not tuple forms", path)
         if items is None:
             raise CalleSchemaError('An array schema needs "items"', path)
         assert_calle_schema_subset(items, f"{path}.items")
