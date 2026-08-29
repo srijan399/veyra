@@ -3,5 +3,6 @@
   "editor.formatOnSave": true,
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff"
-  }
+  },
+  "tailwindCSS.lint.suggestCanonicalClasses": "ignore"
 }

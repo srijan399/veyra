@@ -1,13 +1,13 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { NODE_CHROME } from "@/lib/node-style";
-import type { WorkflowNode } from "@/types/workflow";
+import { useState } from 'react';
+import { NODE_CHROME } from '@/lib/node-style';
+import type { WorkflowNode } from '@/types/workflow';
 
 const LABEL =
-  "mb-[7px] block text-[10.5px] uppercase tracking-[.12em] text-bone/50";
+  'mb-[7px] block text-[10.5px] uppercase tracking-[.12em] text-bone/50';
 const FIELD =
-  "w-full border border-bone/[.26] bg-[#232120] px-3 py-2.5 text-bone outline-none";
+  'w-full border border-bone/[.26] bg-[#232120] px-3 py-2.5 text-bone outline-none';
 
 interface NodeInspectorProps {
   node: WorkflowNode | null;
@@ -24,7 +24,7 @@ export default function NodeInspector({
   onClose,
   onChange,
 }: NodeInspectorProps) {
-  const [newCapture, setNewCapture] = useState("");
+  const [newCapture, setNewCapture] = useState('');
 
   if (!node) {
     return (
@@ -43,7 +43,7 @@ export default function NodeInspector({
     const name = newCapture.trim();
     if (!name || node.captures.includes(name)) return;
     onChange({ captures: [...node.captures, name] });
-    setNewCapture("");
+    setNewCapture('');
   };
 
   return (
@@ -109,7 +109,7 @@ export default function NodeInspector({
             value={newCapture}
             onChange={(e) => setNewCapture(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === 'Enter') {
                 e.preventDefault();
                 addCapture();
               }
@@ -122,7 +122,9 @@ export default function NodeInspector({
         <div className="flex flex-col gap-2.5 border-t border-bone/[.18] pt-4 text-xs">
           <div className="flex justify-between">
             <span className="text-bone/50">Node type</span>
-            <span className="font-extrabold">{NODE_CHROME[node.type].kicker}</span>
+            <span className="font-extrabold">
+              {NODE_CHROME[node.type].kicker}
+            </span>
           </div>
           <div className="flex justify-between">
             <span className="text-bone/50">Outgoing paths</span>
