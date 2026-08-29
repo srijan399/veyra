@@ -25,7 +25,13 @@ export interface CalleCallRequest {
   webhook_url: string;
 }
 
-export type CampaignStatus = "draft" | "compiled" | "launched" | "completed";
+export type CampaignStatus =
+  | "draft"
+  | "compiled"
+  | "launching"
+  | "launched"
+  | "completed"
+  | "failed";
 
 export interface Campaign {
   id: string;
@@ -41,11 +47,15 @@ export interface Campaign {
 
 export type CallStatus =
   | "pending"
+  | "submitting"
+  | "queued"
   | "in_progress"
   | "completed"
   | "failed"
+  | "canceled"
   | "no_answer"
-  | "result_validation_failed";
+  | "result_validation_failed"
+  | "submission_uncertain";
 
 export interface CallResult {
   id: string;
@@ -55,11 +65,33 @@ export interface CallResult {
   calleCallId?: string;
   qualified: boolean | null;
   /** Null when CALL-E returned structured_result: null — a normal outcome. */
-  capturedData: Record<string, string | number | boolean> | null;
+  capturedData: Record<string, unknown> | null;
+  summary?: string | null;
   transcript?: string;
   status: CallStatus;
   failureCode?: string | null;
+  failureMessage?: string | null;
+  createdAt?: string;
+  startedAt?: string;
   completedAt?: string;
+}
+
+export interface CampaignRecipientPreview {
+  contactId: string;
+  name: string;
+  maskedPhone: string;
+  task: string;
+  resultSchema: Record<string, unknown>;
+}
+
+export interface CampaignLaunchPreview {
+  campaignId: string;
+  mode: "fake" | "live";
+  callCount: number;
+  recipients: CampaignRecipientPreview[];
+  sideEffects: string[];
+  recipientAuthorizationRequired: boolean;
+  approvalDigest: string;
 }
 
 /** A campaign plus the workflow it runs, as the campaign builder needs it. */

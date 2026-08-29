@@ -1,4 +1,5 @@
 import { parseCallDraft, type SafeCallDraft } from "@/lib/calle/safety";
+import { publicCalleWebhookUrl } from "@/lib/calle/webhook-url";
 import type { CalleCallRequest, Contact } from "@/types/campaign";
 
 const CAMPAIGN_NAME_MAX = 120;
@@ -149,18 +150,9 @@ export function campaignNameFromGoal(goal: string): string {
 }
 
 export function calleWebhookUrl(): string {
-  const configured = process.env.APP_URL?.trim() || "http://localhost:3000";
-  let url: URL;
   try {
-    url = new URL(configured);
+    return publicCalleWebhookUrl();
   } catch {
     throw new CampaignInputError(["APP_URL must be an absolute http(s) URL"]);
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new CampaignInputError(["APP_URL must be an absolute http(s) URL"]);
-  }
-  url.pathname = "/api/calle/webhook";
-  url.search = "";
-  url.hash = "";
-  return url.toString();
 }

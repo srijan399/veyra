@@ -70,7 +70,8 @@ create table if not exists public.contacts (
   campaign_id uuid references public.campaigns (id) on delete cascade,
   name text not null,
   phone_number text not null,
-  metadata jsonb
+  metadata jsonb,
+  position integer not null default 0
 );
 
 create table if not exists public.call_results (
@@ -78,13 +79,20 @@ create table if not exists public.call_results (
   campaign_id uuid references public.campaigns (id) on delete cascade,
   contact_id uuid references public.contacts (id) on delete cascade,
   calle_call_id text,
+  idempotency_key text,
+  approval_digest text,
+  compiled_request jsonb,
   qualified boolean,
   -- null is a valid, expected value: CALL-E returns structured_result: null when it
   -- cannot extract a schema-valid result. See TECHNICAL_ARCH.md section 4.8.
   captured_data jsonb,
+  summary text,
   transcript text,
   status text not null default 'pending',
   failure_code text,
+  failure_message text,
+  created_at timestamptz default now(),
+  started_at timestamptz,
   completed_at timestamptz
 );
 
@@ -111,6 +119,8 @@ create index if not exists campaigns_workflow_id_idx    on public.campaigns (wor
 create index if not exists contacts_campaign_id_idx     on public.contacts (campaign_id);
 create index if not exists call_results_campaign_id_idx on public.call_results (campaign_id);
 create index if not exists call_results_contact_id_idx  on public.call_results (contact_id);
+create unique index if not exists call_results_calle_call_id_uidx on public.call_results (calle_call_id);
+create unique index if not exists call_results_idempotency_key_uidx on public.call_results (idempotency_key);
 
 -- ---------------------------------------------------------------------------
 -- 3. Auto-create a profile for every new auth user
@@ -158,8 +168,9 @@ create trigger on_auth_user_created
 -- 4. Row Level Security
 -- ---------------------------------------------------------------------------
 -- `public` is exposed through the Data API, so every table in it gets RLS. Tables with no
--- policies (processed_webhook_events) are then reachable only by the service role, which
--- bypasses RLS — exactly what the webhook route needs and what the browser must not have.
+-- policies (processed_webhook_events) are then reachable only by the database owner used
+-- by the server-only call lifecycle writer — exactly what the webhook route needs and
+-- what the browser must not have.
 
 alter table public.profiles                 enable row level security;
 alter table public.workflows                enable row level security;
@@ -269,9 +280,9 @@ create policy "contacts_own_campaign" on public.contacts
     )
   );
 
--- Read-only for the owner. Call results are written by the CALL-E webhook route under the
--- service role (which bypasses RLS); nothing in the browser should be able to forge or
--- edit the recorded outcome of a real phone call.
+-- Read-only for the campaign owner. Call results are written by the server-only lifecycle
+-- module under the database owner after authenticated launch checks or secret-authorized
+-- webhook correlation; nothing in the browser can forge or edit a call outcome.
 drop policy if exists "call_results_select_own_campaign" on public.call_results;
 create policy "call_results_select_own_campaign" on public.call_results
   for select to authenticated

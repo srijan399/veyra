@@ -1,14 +1,13 @@
-import { desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import CampaignBuilder from "@/components/CampaignBuilder";
 import StepHeader from "@/components/StepHeader";
-import { createSafeDraftFromCompiled } from "@/lib/campaigns/compile";
-import { campaigns, contacts, workflows } from "@/lib/db/schema";
+import { callResults, campaigns, contacts, workflows } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { getSessionUser } from "@/lib/supabase/auth";
-import type { CalleCallRequest, Contact } from "@/types/campaign";
+import type { CallResult, CallStatus, CampaignStatus, Contact } from "@/types/campaign";
 import type { Workflow } from "@/types/workflow";
 
 export default async function CampaignPage({
@@ -24,6 +23,7 @@ export default async function CampaignPage({
         id: campaigns.id,
         workflowId: campaigns.workflowId,
         name: campaigns.name,
+        status: campaigns.status,
         compiledRequest: campaigns.compiledRequest,
       })
       .from(campaigns);
@@ -47,8 +47,30 @@ export default async function CampaignPage({
         metadata: contacts.metadata,
       })
       .from(contacts)
-      .where(eq(contacts.campaignId, campaign.id));
+      .where(eq(contacts.campaignId, campaign.id))
+      .orderBy(asc(contacts.position), asc(contacts.id));
     if (!workflowRow || !contactRows.length) return null;
+
+    const resultRows = await tx
+      .select({
+        id: callResults.id,
+        campaignId: callResults.campaignId,
+        contactId: callResults.contactId,
+        calleCallId: callResults.calleCallId,
+        qualified: callResults.qualified,
+        capturedData: callResults.capturedData,
+        summary: callResults.summary,
+        transcript: callResults.transcript,
+        status: callResults.status,
+        failureCode: callResults.failureCode,
+        failureMessage: callResults.failureMessage,
+        createdAt: callResults.createdAt,
+        startedAt: callResults.startedAt,
+        completedAt: callResults.completedAt,
+      })
+      .from(callResults)
+      .where(eq(callResults.campaignId, campaign.id))
+      .orderBy(asc(callResults.createdAt), asc(callResults.id));
 
     return {
       ...campaign,
@@ -62,6 +84,27 @@ export default async function CampaignPage({
           ...(contact.metadata && typeof contact.metadata === "object"
             ? { metadata: contact.metadata as Record<string, string> }
             : {}),
+        }),
+      ),
+      results: resultRows.map(
+        (result): CallResult => ({
+          id: result.id,
+          campaignId: result.campaignId ?? campaign.id,
+          contactId: result.contactId ?? "",
+          ...(result.calleCallId ? { calleCallId: result.calleCallId } : {}),
+          qualified: result.qualified,
+          capturedData:
+            result.capturedData && typeof result.capturedData === "object"
+              ? (result.capturedData as Record<string, unknown>)
+              : null,
+          summary: result.summary,
+          ...(result.transcript ? { transcript: result.transcript } : {}),
+          status: result.status as CallStatus,
+          failureCode: result.failureCode,
+          failureMessage: result.failureMessage,
+          ...(result.createdAt ? { createdAt: result.createdAt.toISOString() } : {}),
+          ...(result.startedAt ? { startedAt: result.startedAt.toISOString() } : {}),
+          ...(result.completedAt ? { completedAt: result.completedAt.toISOString() } : {}),
         }),
       ),
     };
@@ -92,9 +135,6 @@ export default async function CampaignPage({
     );
   }
 
-  const contact = loaded.contacts[0];
-  const compiled = loaded.compiledRequest as CalleCallRequest;
-  const initialDraft = createSafeDraftFromCompiled(compiled, loaded.name, contact);
   const initialCsv = loaded.contacts
     .map((item) => `${item.name}, ${item.phoneNumber}`)
     .join("\n");
@@ -109,7 +149,8 @@ export default async function CampaignPage({
         initialContacts={loaded.contacts}
         initialCsv={initialCsv}
         stepCount={loaded.workflow.nodes.length}
-        initialDraft={initialDraft}
+        initialStatus={loaded.status as CampaignStatus}
+        initialResults={loaded.results}
       />
     </div>
   );
