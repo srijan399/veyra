@@ -1,16 +1,41 @@
+import { desc } from "drizzle-orm";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import StepHeader from "@/components/StepHeader";
+import { callResults, campaigns, workflows } from "@/lib/db/schema";
+import { withRLS } from "@/lib/db/with-rls";
 import { initialsFor } from "@/lib/initials";
 import { getSessionUser } from "@/lib/supabase/auth";
-import {
-  SAMPLE_PROFILE_STATS,
-  SAMPLE_SAVED_WORKFLOWS,
-  type SavedWorkflow,
-} from "@/lib/sample-profile";
+import type { Workflow } from "@/types/workflow";
 
 const EYEBROW = "text-[10.5px] uppercase tracking-[.14em] text-bone/45";
+
+type SavedWorkflow = {
+  id: string;
+  goal: string;
+  steps: number;
+  compiledCampaignId: string | null;
+  calls: number;
+  qualificationRate: string;
+  updatedAt: Date | null;
+};
+
+function formatUpdated(date: Date | null): string {
+  if (!date) return "";
+  const minutes = Math.max(0, Math.round((Date.now() - date.getTime()) / 60_000));
+  if (minutes < 1) return "Updated just now";
+  if (minutes < 60) return `Updated ${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `Updated ${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `Updated ${days}d ago`;
+  return `Updated ${date.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+  })}`;
+}
 
 function Stat({
   label,
@@ -35,18 +60,13 @@ function Stat({
 }
 
 function WorkflowCard({ workflow: w }: { workflow: SavedWorkflow }) {
-  const compiled = w.state === "Compiled";
+  const compiled = Boolean(w.compiledCampaignId);
 
   return (
     <div className="flex flex-col gap-3.5 border-b border-r border-bone/[.14] px-[22px] pb-[18px] pt-5">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="mb-1.5 text-[10px] uppercase tracking-[.14em] text-ember">
-            {w.vertical}
-          </div>
-          <div className="text-[17px] font-extrabold leading-tight tracking-[-.01em] text-bone">
-            {w.name}
-          </div>
+        <div className="text-[10px] uppercase tracking-[.14em] text-ember">
+          {w.steps} conversation node{w.steps === 1 ? "" : "s"}
         </div>
         <span
           className={`flex-none px-2 py-1 text-[10px] font-extrabold uppercase tracking-[.08em] ${
@@ -55,29 +75,19 @@ function WorkflowCard({ workflow: w }: { workflow: SavedWorkflow }) {
               : "border border-bone/[.22] text-bone/45"
           }`}
         >
-          {w.state}
+          {compiled ? "Compiled" : "Draft"}
         </span>
       </div>
 
-      <p className="text-[12.5px] leading-[1.55] text-bone/55">{w.goal}</p>
-
-      {/* Activity sparkline. Decorative, so it is hidden from assistive tech rather than
-          announced as a row of empty elements. */}
-      <div aria-hidden className="flex h-6 items-end gap-0.5">
-        {w.spark.map((h, i) => (
-          <span
-            key={i}
-            className={compiled ? "flex-1 bg-flame/60" : "flex-1 bg-bone/25"}
-            style={{ height: `${Math.max(h * 100, 6)}%` }}
-          />
-        ))}
-      </div>
+      <p className="text-[15px] font-extrabold leading-[1.45] tracking-[-.01em] text-bone">
+        {w.goal}
+      </p>
 
       <div className="grid grid-cols-3 gap-2.5 border-t border-bone/[.14] pt-3 text-[11px] text-bone">
         {[
           ["Steps", String(w.steps)],
-          ["Calls", w.calls.toLocaleString()],
-          ["Qualified", w.qualRate],
+          ["Live calls", w.calls.toLocaleString("en-IN")],
+          ["Qualified", w.qualificationRate],
         ].map(([label, value]) => (
           <span key={label}>
             <span className="mb-[3px] block text-[9.5px] uppercase tracking-[.08em] text-bone/40">
@@ -89,25 +99,28 @@ function WorkflowCard({ workflow: w }: { workflow: SavedWorkflow }) {
       </div>
 
       <div className="mt-auto flex items-center gap-2">
+        {w.compiledCampaignId ? (
+          <Link
+            href={`/campaign?campaign=${w.compiledCampaignId}`}
+            className="bg-flame px-3.5 py-[9px] text-[12.5px] font-extrabold text-ink no-underline"
+          >
+            Prepare for CALL-E
+          </Link>
+        ) : (
+          <span
+            className="border border-bone/[.18] px-3.5 py-[9px] text-[12.5px] font-extrabold text-bone/30"
+            aria-disabled="true"
+          >
+            Prepare for CALL-E
+          </span>
+        )}
         <Link
-          href="/campaign"
-          className={`px-3.5 py-[9px] text-[12.5px] font-extrabold no-underline ${
-            compiled
-              ? "bg-flame text-ink"
-              : "pointer-events-none border border-bone/[.18] text-bone/30"
-          }`}
-          aria-disabled={!compiled}
-          tabIndex={compiled ? undefined : -1}
-        >
-          Prepare for CALL-E
-        </Link>
-        <Link
-          href="/workflow"
+          href={`/workflow/${w.id}`}
           className="border border-bone/[.26] px-3.5 py-[9px] text-[12.5px] font-extrabold text-bone no-underline"
         >
           Open editor
         </Link>
-        <span className="ml-auto text-[11px] text-bone/35">{w.updated}</span>
+        <span className="ml-auto text-[11px] text-bone/35">{formatUpdated(w.updatedAt)}</span>
       </div>
     </div>
   );
@@ -120,10 +133,78 @@ export default async function ProfilePage() {
   // reaches the page without a session. Cheap, and it keeps `user` non-null below.
   if (!user) redirect("/auth/login?next=/profile");
 
-  const compiledCount = SAMPLE_SAVED_WORKFLOWS.filter(
-    (w) => w.state === "Compiled",
+  const data = await withRLS(user.id, async (tx) => {
+    const workflowRows = await tx
+      .select({
+        id: workflows.id,
+        goal: workflows.goal,
+        schema: workflows.schema,
+        updatedAt: workflows.updatedAt,
+      })
+      .from(workflows)
+      .orderBy(desc(workflows.updatedAt));
+    const campaignRows = await tx
+      .select({
+        id: campaigns.id,
+        workflowId: campaigns.workflowId,
+        compiledRequest: campaigns.compiledRequest,
+        status: campaigns.status,
+        createdAt: campaigns.createdAt,
+      })
+      .from(campaigns)
+      .orderBy(desc(campaigns.createdAt));
+    const resultRows = await tx
+      .select({
+        campaignId: callResults.campaignId,
+        calleCallId: callResults.calleCallId,
+        qualified: callResults.qualified,
+        status: callResults.status,
+      })
+      .from(callResults);
+
+    return { workflowRows, campaignRows, resultRows };
+  });
+
+  const campaignById = new Map(data.campaignRows.map((campaign) => [campaign.id, campaign]));
+  const liveResults = data.resultRows.filter(
+    (result) => result.calleCallId && !result.calleCallId.startsWith("fake_"),
+  );
+  const liveCampaignIds = new Set(
+    liveResults.flatMap((result) => (result.campaignId ? [result.campaignId] : [])),
+  );
+  const completedLiveCalls = liveResults.filter((result) => result.status === "completed").length;
+  const completedLiveCampaigns = data.campaignRows.filter(
+    (campaign) => liveCampaignIds.has(campaign.id) && campaign.status === "completed",
   ).length;
-  const draftCount = SAMPLE_SAVED_WORKFLOWS.length - compiledCount;
+
+  const savedWorkflows: SavedWorkflow[] = data.workflowRows.map((row) => {
+    const workflowCampaigns = data.campaignRows.filter(
+      (campaign) => campaign.workflowId === row.id,
+    );
+    const compiledCampaign = workflowCampaigns.find((campaign) => campaign.compiledRequest !== null);
+    const workflowResults = liveResults.filter(
+      (result) =>
+        result.campaignId !== null && campaignById.get(result.campaignId)?.workflowId === row.id,
+    );
+    const measuredResults = workflowResults.filter((result) => result.qualified !== null);
+    const qualifiedResults = measuredResults.filter((result) => result.qualified).length;
+    const workflow = row.schema as Partial<Workflow>;
+
+    return {
+      id: row.id,
+      goal: row.goal,
+      steps: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
+      compiledCampaignId: compiledCampaign?.id ?? null,
+      calls: workflowResults.length,
+      qualificationRate:
+        measuredResults.length === 0
+          ? "—"
+          : `${Math.round((qualifiedResults / measuredResults.length) * 100)}%`,
+      updatedAt: row.updatedAt,
+    };
+  });
+  const compiledCount = savedWorkflows.filter((workflow) => workflow.compiledCampaignId).length;
+  const draftCount = savedWorkflows.length - compiledCount;
 
   return (
     <div className="flex min-h-screen flex-col bg-ink">
@@ -158,37 +239,51 @@ export default async function ProfilePage() {
         <div className="grid grid-cols-1 border-b-2 border-bone/[.26] sm:grid-cols-3">
           <Stat
             label="Saved workflows"
-            value={String(SAMPLE_SAVED_WORKFLOWS.length)}
+            value={String(savedWorkflows.length)}
             sub={`${compiledCount} compiled, ${draftCount} draft`}
           />
           <Stat
-            label="Campaigns run"
-            value={SAMPLE_PROFILE_STATS.campaignsRun.value}
-            sub={SAMPLE_PROFILE_STATS.campaignsRun.sub}
+            label="Live campaigns run"
+            value={String(liveCampaignIds.size)}
+            sub={`${completedLiveCampaigns} completed`}
           />
           <Stat
-            label="Calls placed"
-            value={SAMPLE_PROFILE_STATS.callsPlaced.value}
-            sub={SAMPLE_PROFILE_STATS.callsPlaced.sub}
+            label="Live calls placed"
+            value={liveResults.length.toLocaleString("en-IN")}
+            sub={`${completedLiveCalls.toLocaleString("en-IN")} completed`}
             last
           />
         </div>
 
         <div className="flex flex-wrap items-baseline justify-between gap-4 px-[34px] pb-3.5 pt-[26px]">
           <div className="text-[10.5px] uppercase tracking-[.14em] text-bone/50">
-            Saved workflows{" "}
-            <span className="text-bone/35">({SAMPLE_SAVED_WORKFLOWS.length})</span>
+            Saved workflows <span className="text-bone/35">({savedWorkflows.length})</span>
           </div>
           <div className="text-xs text-bone/40">
-            Compiled workflows go straight to CALL-E without a new prompt
+            Compiled workflows open their latest saved CALL-E campaign
           </div>
         </div>
 
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] border-t border-bone/[.18]">
-          {SAMPLE_SAVED_WORKFLOWS.map((w) => (
-            <WorkflowCard key={w.id} workflow={w} />
-          ))}
-        </div>
+        {savedWorkflows.length === 0 ? (
+          <div className="flex flex-col items-start gap-4 border-t border-bone/[.18] px-[34px] py-16">
+            <p className="max-w-md text-[14px] leading-[1.55] text-bone/55">
+              No workflows yet. Describe a calling process on the Prompt step and Veyra will
+              generate an editable workflow here.
+            </p>
+            <Link
+              href="/"
+              className="border border-bone/[.26] px-3.5 py-[9px] text-[12.5px] font-extrabold text-bone no-underline"
+            >
+              Go to Prompt
+            </Link>
+          </div>
+        ) : (
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] border-t border-bone/[.18]">
+            {savedWorkflows.map((workflow) => (
+              <WorkflowCard key={workflow.id} workflow={workflow} />
+            ))}
+          </div>
+        )}
       </main>
     </div>
   );
