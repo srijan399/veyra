@@ -30,6 +30,20 @@ Veyra is a workflow generation and orchestration layer on top of CALL-E. A busin
 
 The workflow graph is Veyra's own authoring and editing abstraction. CALL-E does not execute an external branching graph, it runs one adaptive conversation from a single task instruction and extracts structured data at the end of the call, so the graph is flattened at compile time into a natural-language task plus a result schema.
 
+## Implementation Status
+
+The repository is being delivered in phases. **Phases 1 and 2 are implemented.** Phase 1
+provides an authenticated, one-contact CALL-E execution boundary with strict E.164
+validation, an exact masked preview, explicit approval, a content-bound idempotency key,
+a fake-by-default adapter, and guarded live mode. Phase 2 connects the editable workflow
+to the Python compiler, persists the compiled campaign and first contact under Supabase
+RLS, reloads that campaign, and recompiles contact edits before every preview. The
+credential-free `pnpm demo` places zero real calls. See `web/README.md` for the runbook.
+
+The multi-contact campaign launcher, webhook result capture, results dashboard, deployment,
+and recorded real-call proof described below are the target product and belong to later
+phases; they are not claimed as complete yet.
+
 ## System Architecture
 
 ```mermaid
@@ -182,13 +196,17 @@ Potential monetization paths worth mentioning in the pitch, even briefly, since 
 
 ## Alignment with CALL-E Judging Criteria
 
-**Technical Implementation.** Veyra is a real CALL-E Calls API integration, not a wrapper around a demo key. Each generated workflow is compiled into a single natural-language `task` plus a `result_schema` constrained to CALL-E's supported JSON Schema subset and validated before dispatch. Campaigns dispatch one call per contact with the contact's details interpolated into that contact's task string, each carrying a stable `Idempotency-Key` of `veyra_{campaignId}_{contactId}` so a retry after a timeout cannot place a duplicate real call, and a `metadata` object of `{ campaignId, contactId }` that correlates results back to our Supabase rows. Results are captured webhook-first: the endpoint handles all three terminal event types (`call.completed`, `call.failed`, `call.result_validation_failed`), deduplicates at-least-once delivery against stored event ids before running side effects, and treats a null `structured_result` as the documented normal outcome rather than an error.
+**Technical Implementation (current).** Veyra imports CALL-E's official TypeScript SDK and calls `client.calls.create` only after an authenticated user approves an exact one-call preview and all server-side live gates pass. The request schema is constrained to CALL-E's supported JSON Schema subset and validated before dispatch. Fake mode is the default even when credentials exist, and performs no SDK request. The one live SDK submission uses a stable idempotency key bound to the authenticated user and exact recipient, task, schema, and metadata, with no automatic retry path.
+
+**Technical Implementation (current compiler path).** The edited graph is compiled by the credential-free Python engine into a personalized task and result schema. The owned workflow, campaign, first contact, and compiled request are persisted under Postgres RLS. Contact data is explicitly marked as untrusted data in the generated instruction, and every preview recompiles and revalidates the current recipient before entering the Phase 1 approval boundary.
+
+**Technical Implementation (planned).** Later phases will dispatch one approved request per authorized contact and capture terminal outcomes webhook-first with event deduplication and explicit handling of null structured results.
 
 **Creativity and Originality.** The generation layer turns a plain-English description of a calling process into an editable conversation graph with branching, qualification scoring, and a structured output schema. The graph is Veyra's authoring abstraction, flattened at compile time rather than shipped to CALL-E, which is what lets a non-technical user edit call logic visually and still get a well-formed single-task call.
 
 **Real World Impact.** The same engine generates wealth management, education, and insurance qualification workflows from different prompts, targeting teams that today either staff manual calling floors or hand-build a voice agent per campaign.
 
-**Presentation.** The demo runs the full path on camera: prompt in, workflow generated and edited, compiled to a Calls API request, a real call placed, structured result returned to the dashboard.
+**Presentation target.** The final demo should run the full path on camera: prompt in, workflow generated and edited, compiled to a Calls API request, one authorized real call placed, and a structured result returned to the dashboard. Phases 1 and 2 currently demonstrate prompt-to-persisted-compile, exact preview/approval, and a credential-free fake result.
 
 ## Our Submission Checklist
 
