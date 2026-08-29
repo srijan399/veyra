@@ -8,7 +8,18 @@
  */
 
 import { sql } from "drizzle-orm";
-import { boolean, index, jsonb, pgSchema, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgSchema,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 // auth.users is owned by Supabase Auth (GoTrue), not by this app. Declared here only so
 // foreign keys below can reference it — Drizzle never creates, alters, or drops it in
@@ -84,6 +95,7 @@ export const contacts = pgTable(
     name: text("name").notNull(),
     phoneNumber: text("phone_number").notNull(),
     metadata: jsonb("metadata"),
+    position: integer("position").notNull().default(0),
   },
   (table) => [index("contacts_campaign_id_idx").on(table.campaignId)],
 );
@@ -97,18 +109,28 @@ export const callResults = pgTable(
     campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }),
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
     calleCallId: text("calle_call_id"),
+    idempotencyKey: text("idempotency_key"),
+    approvalDigest: text("approval_digest"),
+    // Immutable snapshot of the exact validated call draft used for this run.
+    compiledRequest: jsonb("compiled_request"),
     qualified: boolean("qualified"),
     // Null is a valid, expected value: CALL-E returns structured_result: null when it
     // cannot extract a schema-valid result. See TECHNICAL_ARCH.md section 4.8.
     capturedData: jsonb("captured_data"),
+    summary: text("summary"),
     transcript: text("transcript"),
     status: text("status").notNull().default("pending"),
     failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
   },
   (table) => [
     index("call_results_campaign_id_idx").on(table.campaignId),
     index("call_results_contact_id_idx").on(table.contactId),
+    uniqueIndex("call_results_calle_call_id_uidx").on(table.calleCallId),
+    uniqueIndex("call_results_idempotency_key_uidx").on(table.idempotencyKey),
   ],
 );
 

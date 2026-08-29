@@ -51,8 +51,9 @@ create trigger on_auth_user_created
 -- 2. Row Level Security
 -- ---------------------------------------------------------------------------
 -- `public` is exposed through the Data API, so every table in it gets RLS. Tables with no
--- policies (processed_webhook_events) are then reachable only by the service role, which
--- bypasses RLS — exactly what the webhook route needs and what the browser must not have.
+-- policies (processed_webhook_events) are then reachable only by the database owner used
+-- by the server-only call lifecycle writer — exactly what the webhook route needs and
+-- what the browser must not have.
 
 alter table public.profiles                 enable row level security;
 alter table public.workflows                enable row level security;
@@ -162,9 +163,9 @@ create policy "contacts_own_campaign" on public.contacts
     )
   );
 
--- Read-only for the owner. Call results are written by the CALL-E webhook route under the
--- service role (which bypasses RLS); nothing in the browser should be able to forge or
--- edit the recorded outcome of a real phone call.
+-- Read-only for the campaign owner. Call results are written by the server-only lifecycle
+-- module under the database owner after authenticated launch checks or secret-authorized
+-- webhook correlation; nothing in the browser can forge or edit a call outcome.
 drop policy if exists "call_results_select_own_campaign" on public.call_results;
 create policy "call_results_select_own_campaign" on public.call_results
   for select to authenticated

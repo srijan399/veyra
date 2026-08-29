@@ -46,11 +46,42 @@ pnpm dev
 Workflow and campaign persistence requires the Supabase and `DATABASE_URL` settings in
 `.env.local`. Compilation itself never receives `CALLE_API_KEY` and cannot place a call.
 
+### Phase 3: durable campaign execution and results
+
+The campaign screen now persists and independently compiles up to ten unique contacts,
+shows the exact personalized task and schema for each one, and binds one explicit approval
+to the whole immutable batch. Fake mode executes all ten without external requests. Live
+mode deliberately remains limited to one explicitly authorized test recipient.
+
+Before submitting, Veyra reserves one durable `call_results` row per contact with the exact
+validated request snapshot and idempotency key. A campaign can be claimed for launch only
+once. Provider ambiguity becomes `submission_uncertain` and is never retried automatically.
+
+Current CALL-E webhooks are unsigned. Veyra therefore adds a secret token to the per-call
+delivery URL, requires `CALL-E-Event-Id` to match the body event id, verifies UUID correlation
+metadata, and atomically deduplicates every event before updating its call result. Terminal
+webhooks persist structured results, qualification, summary, failures, and a readable
+transcript. The campaign screen polls an RLS-protected results endpoint until every run is
+terminal.
+
+Apply the Phase 3 database migration before using launch or results:
+
+```bash
+pnpm db:migrate
+```
+
 ### Routes
 
 - `POST /api/workflows/[id]/compile` validates/saves the edited workflow and creates an
   owned compiled campaign with one fictional reserved contact.
 - `POST /api/campaigns/[id]/compile` recompiles and persists the current first contact.
+- `POST /api/campaigns/[id]/preview` validates, saves, and compiles 1–10 contacts and
+  returns one batch approval preview.
+- `POST /api/campaigns/[id]/launch` recompiles the saved campaign, verifies the exact
+  approval, reserves durable runs, and submits each call once.
+- `GET /api/campaigns/[id]/results` returns the owned campaign status and durable results.
+- `POST /api/calle/webhook` accepts secret-token-authorized terminal CALL-E events and
+  processes each event id once.
 - `POST /api/calls/preview` validates a one-call draft and returns an approval-bound preview.
 - `POST /api/calls` recomputes that preview for the authenticated user and submits it once.
 
@@ -70,7 +101,8 @@ Live mode fails closed and requires every server-side gate below:
 4. Set `CALLE_LIVE_WINDOW_START` and `CALLE_LIVE_WINDOW_END` to a currently active ISO-8601
    window no longer than four hours.
 5. Keep `CALLE_BASE_URL=https://api.heycall-e.com`.
-6. In the UI, preview the exact call, approve it, and separately confirm recipient
+6. Set public HTTPS `APP_URL` and a random `CALLE_WEBHOOK_TOKEN` of at least 32 characters.
+7. In the UI, preview the exact call, approve it, and separately confirm recipient
    authorization.
 
 A successful live submission may consume CALL-E credit and cannot be cancelled by Veyra

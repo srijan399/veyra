@@ -77,8 +77,10 @@ type RequireUserResult =
  *
  * Never call `getDb()` from `lib/db/client.ts` directly, and never reach for the
  * service-role client, to "make a query work": both bypass RLS entirely, and every
- * route doing that becomes a cross-tenant data leak. The only legitimate service-role
- * caller in Veyra is the CALL-E webhook, which has no user session to work from.
+ * route doing that becomes a cross-tenant data leak. The narrow exception is
+ * `lib/db/call-lifecycle.ts`: it writes browser-read-only call records for authenticated
+ * launches after re-checking campaign ownership, and for secret-authorized CALL-E
+ * webhooks that have no user session.
  */
 export async function requireUser(): Promise<RequireUserResult> {
   const supabase = await createClient();

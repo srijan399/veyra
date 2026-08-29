@@ -1,15 +1,12 @@
 import type { JsonObject, SafeCallDraft, SafeCallPreview } from "./safety";
 import { isE164, type CallMode } from "./safety";
+import { CallConfigurationError } from "./client-error";
+import { liveCalleWebhookUrl } from "./webhook-url";
+
+export { CallConfigurationError } from "./client-error";
 
 const OFFICIAL_CALLE_BASE_URL = "https://api.heycall-e.com";
 const MAX_LIVE_WINDOW_MS = 4 * 60 * 60 * 1_000;
-
-export class CallConfigurationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "CallConfigurationError";
-  }
-}
 
 export interface SafeCallExecution {
   mode: CallMode;
@@ -74,6 +71,20 @@ function liveConfig(expectedPhone: string): { apiKey: string; baseUrl: string } 
   return { apiKey, baseUrl: configuredBaseUrl };
 }
 
+export function assertApprovedCallReady(
+  draft: SafeCallDraft,
+  preview: SafeCallPreview,
+): void {
+  const currentMode = getCallMode();
+  if (currentMode !== preview.mode) {
+    throw new CallConfigurationError("CALL_MODE changed after preview; generate a new preview");
+  }
+  if (currentMode === "live") {
+    liveConfig(draft.phone);
+    liveCalleWebhookUrl();
+  }
+}
+
 function fakeValue(schema: unknown): unknown {
   if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return null;
   const value = schema as Record<string, unknown>;
@@ -106,10 +117,8 @@ export async function executeApprovedCall(
   draft: SafeCallDraft,
   preview: SafeCallPreview,
 ): Promise<SafeCallExecution> {
-  const currentMode = getCallMode();
-  if (currentMode !== preview.mode) {
-    throw new CallConfigurationError("CALL_MODE changed after preview; generate a new preview");
-  }
+  assertApprovedCallReady(draft, preview);
+  const currentMode = preview.mode;
 
   if (currentMode === "fake") {
     const structuredResult = fakeValue(draft.resultSchema);
@@ -136,6 +145,9 @@ export async function executeApprovedCall(
       task: draft.task,
       recipient: { phone: draft.phone },
       resultSchema: draft.resultSchema,
+      ...(typeof draft.metadata?.veyraCallResultId === "string"
+        ? { webhookUrl: liveCalleWebhookUrl() }
+        : {}),
       metadata: {
         ...(draft.metadata ?? {}),
         veyraApprovalDigest: preview.approvalDigest,
