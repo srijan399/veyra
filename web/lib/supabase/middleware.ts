@@ -20,6 +20,7 @@ const PROTECTED_PREFIXES = [
   '/profile',
   '/api/workflows',
   '/api/campaigns',
+  '/api/calls',
 ] as const;
 
 export async function updateSession(request: NextRequest) {
