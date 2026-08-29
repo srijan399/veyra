@@ -11,7 +11,7 @@ Field names are snake_case Python-side with camelCase aliases so both
 
 from __future__ import annotations
 
-from typing import Literal, Union
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -47,7 +47,7 @@ class QualificationRule(BaseModel):
 
     field: str
     operator: QualificationOperator
-    value: Union[str, float, list[str]]
+    value: str | float | list[str]
     points: float
 
 
@@ -69,8 +69,8 @@ class OutcomeField(BaseModel):
     description: str | None = None
     enum_values: list[str] | None = Field(default=None, alias="enumValues")
     required: bool = False
-    items: "OutcomeField | None" = None
-    properties: list["OutcomeField"] | None = None
+    items: OutcomeField | None = None
+    properties: list[OutcomeField] | None = None
 
 
 OutcomeField.model_rebuild()

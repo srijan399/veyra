@@ -125,8 +125,16 @@ SAMPLE_WORKFLOW = Workflow.model_validate(
         },
         "outcomeSchema": {
             "fields": [
-                {"name": "qualified", "type": "boolean", "description": "Met the advisor threshold"},
-                {"name": "primary_goal", "type": "string", "description": "Growth, income or protection"},
+                {
+                    "name": "qualified",
+                    "type": "boolean",
+                    "description": "Met the advisor threshold",
+                },
+                {
+                    "name": "primary_goal",
+                    "type": "string",
+                    "description": "Growth, income or protection",
+                },
                 {"name": "horizon_years", "type": "number"},
                 {"name": "risk_profile", "type": "string"},
                 {"name": "slot_booked", "type": "boolean"},
