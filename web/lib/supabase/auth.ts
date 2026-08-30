@@ -12,6 +12,7 @@ export interface SessionUser {
   email: string | null;
   fullName: string | null;
   companyName: string | null;
+  avatarUrl: string | null;
   role: string;
 }
 
@@ -38,6 +39,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       .select({
         fullName: profiles.fullName,
         companyName: profiles.companyName,
+        avatarPath: profiles.avatarPath,
         role: profiles.role,
       })
       .from(profiles)
@@ -53,6 +55,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     fullName: profile?.fullName ?? (user.user_metadata?.full_name as string) ?? null,
     companyName:
       profile?.companyName ?? (user.user_metadata?.company_name as string) ?? null,
+    avatarUrl: profile?.avatarPath ? '/api/profile/image' : null,
     role: profile?.role ?? 'business_user',
   };
 }

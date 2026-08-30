@@ -1,12 +1,13 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
-import { workflows } from "@/lib/db/schema";
+import { campaigns, workflows } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { requireUser } from "@/lib/supabase/auth";
 import type { Workflow } from "@/types/workflow";
 
 type Params = { params: Promise<{ id: string }> };
+const ACTIVE_CAMPAIGN_STATUSES = ["scheduled", "launching", "launched"];
 
 /**
  * Load one workflow. RLS (`workflows_select_own`) is what actually enforces that the
@@ -89,4 +90,55 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 
   return NextResponse.json({ workflow: row.schema as Workflow, updatedAt: row.updatedAt });
+}
+
+/**
+ * Permanently remove an owned workflow and its cascaded campaign history. A campaign
+ * that is scheduled or may still receive CALL-E events blocks deletion, because removing
+ * its correlation rows would make dispatch/webhook handling unsafe. The selected campaign
+ * rows are locked so a concurrent launch cannot slip between the state check and delete.
+ */
+export async function DELETE(_request: Request, { params }: Params) {
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+  const { id } = await params;
+
+  try {
+    const outcome = await withRLS(auth.user.id, async (tx) => {
+      const [owned] = await tx
+        .select({ id: workflows.id })
+        .from(workflows)
+        .where(eq(workflows.id, id))
+        .limit(1);
+      if (!owned) return "not_found" as const;
+
+      const workflowCampaigns = await tx
+        .select({ status: campaigns.status })
+        .from(campaigns)
+        .where(eq(campaigns.workflowId, id))
+        .for("update");
+      if (workflowCampaigns.some((campaign) => ACTIVE_CAMPAIGN_STATUSES.includes(campaign.status))) {
+        return "active_campaign" as const;
+      }
+
+      const [deleted] = await tx
+        .delete(workflows)
+        .where(eq(workflows.id, id))
+        .returning({ id: workflows.id });
+      return deleted ? ("deleted" as const) : ("not_found" as const);
+    });
+
+    if (outcome === "not_found") {
+      return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
+    }
+    if (outcome === "active_campaign") {
+      return NextResponse.json(
+        { error: "This workflow has a scheduled or active campaign and cannot be deleted yet" },
+        { status: 409 },
+      );
+    }
+    return new Response(null, { status: 204 });
+  } catch {
+    return NextResponse.json({ error: "Failed to delete workflow" }, { status: 500 });
+  }
 }

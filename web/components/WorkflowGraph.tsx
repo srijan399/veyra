@@ -1,6 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import {
+  clampGraphZoom,
+  type GraphPoint,
+  type GraphViewport,
+  zoomGraphAt,
+} from "@/lib/graph-viewport";
 import { NODE_CHROME, NODE_H, NODE_W } from "@/lib/node-style";
 import type { WorkflowEdge, WorkflowNode } from "@/types/workflow";
 
@@ -44,6 +50,29 @@ interface WorkflowGraphProps {
   onMoveNode: (id: string, x: number, y: number) => void;
 }
 
+type TouchGesture =
+  | {
+      kind: "pan";
+      startPoint: GraphPoint;
+      startViewport: GraphViewport;
+    }
+  | {
+      kind: "node";
+      nodeId: string;
+      nodeX: number;
+      nodeY: number;
+      startPoint: GraphPoint;
+      scale: number;
+    }
+  | {
+      kind: "pinch";
+      startDistance: number;
+      startMidpoint: GraphPoint;
+      startViewport: GraphViewport;
+    };
+
+const INITIAL_VIEWPORT: GraphViewport = { x: 0, y: 0, scale: 1 };
+
 export default function WorkflowGraph({
   nodes,
   edges,
@@ -51,9 +80,37 @@ export default function WorkflowGraph({
   onSelect,
   onMoveNode,
 }: WorkflowGraphProps) {
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+  const touchGesture = useRef<TouchGesture | null>(null);
+  const viewportRef = useRef<GraphViewport>(INITIAL_VIEWPORT);
+  const [viewport, setViewportState] = useState<GraphViewport>(INITIAL_VIEWPORT);
   const [dragging, setDragging] = useState(false);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+
+  const setViewport = (next: GraphViewport) => {
+    viewportRef.current = next;
+    setViewportState(next);
+  };
+
+  const localPoint = (clientX: number, clientY: number): GraphPoint => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    return { x: clientX - (rect?.left ?? 0), y: clientY - (rect?.top ?? 0) };
+  };
+
+  const touchPoint = (touch: React.Touch): GraphPoint =>
+    localPoint(touch.clientX, touch.clientY);
+
+  const touchMidpoint = (touches: React.TouchList): GraphPoint => {
+    const first = touchPoint(touches[0]);
+    const second = touchPoint(touches[1]);
+    return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+  };
+
+  const touchDistance = (touches: React.TouchList): number => {
+    const first = touchPoint(touches[0]);
+    const second = touchPoint(touches[1]);
+    return Math.hypot(second.x - first.x, second.y - first.y);
+  };
 
   /** Runs `move` on pointermove until pointerup, wherever the pointer goes. */
   const trackPointer = (move: (e: PointerEvent) => void) => {
@@ -62,42 +119,189 @@ export default function WorkflowGraph({
       setDragging(false);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   };
 
   const onCanvasDown = (e: React.PointerEvent) => {
+    if (e.pointerType === "touch") return;
     const sx = e.clientX;
     const sy = e.clientY;
-    const start = pan;
+    const start = viewportRef.current;
     trackPointer((ev) =>
-      setPan({ x: start.x + (ev.clientX - sx), y: start.y + (ev.clientY - sy) }),
+      setViewport({
+        ...start,
+        x: start.x + (ev.clientX - sx),
+        y: start.y + (ev.clientY - sy),
+      }),
     );
   };
 
   const onNodeDown = (e: React.PointerEvent, node: WorkflowNode) => {
+    if (e.pointerType === "touch") return;
     e.stopPropagation();
     onSelect(node.id);
     const sx = e.clientX;
     const sy = e.clientY;
     const ox = node.x;
     const oy = node.y;
+    const scale = viewportRef.current.scale;
     trackPointer((ev) =>
-      onMoveNode(node.id, ox + (ev.clientX - sx), oy + (ev.clientY - sy)),
+      onMoveNode(
+        node.id,
+        ox + (ev.clientX - sx) / scale,
+        oy + (ev.clientY - sy) / scale,
+      ),
+    );
+  };
+
+  const beginTouchGesture = (touches: React.TouchList, target: EventTarget | null) => {
+    if (touches.length >= 2) {
+      touchGesture.current = {
+        kind: "pinch",
+        startDistance: Math.max(touchDistance(touches), 1),
+        startMidpoint: touchMidpoint(touches),
+        startViewport: viewportRef.current,
+      };
+      setDragging(true);
+      return;
+    }
+    if (touches.length !== 1) return;
+
+    const point = touchPoint(touches[0]);
+    const nodeElement = target instanceof Element
+      ? target.closest<HTMLElement>("[data-workflow-node-id]")
+      : null;
+    const node = nodeElement ? byId.get(nodeElement.dataset.workflowNodeId ?? "") : null;
+    if (node) {
+      onSelect(node.id);
+      touchGesture.current = {
+        kind: "node",
+        nodeId: node.id,
+        nodeX: node.x,
+        nodeY: node.y,
+        startPoint: point,
+        scale: viewportRef.current.scale,
+      };
+    } else {
+      touchGesture.current = {
+        kind: "pan",
+        startPoint: point,
+        startViewport: viewportRef.current,
+      };
+    }
+    setDragging(true);
+  };
+
+  const onTouchStart = (event: React.TouchEvent) => {
+    event.preventDefault();
+    beginTouchGesture(event.touches, event.target);
+  };
+
+  const onTouchMove = (event: React.TouchEvent) => {
+    event.preventDefault();
+    const gesture = touchGesture.current;
+    if (!gesture) return;
+
+    if (event.touches.length >= 2 && gesture.kind === "pinch") {
+      const midpoint = touchMidpoint(event.touches);
+      const scale = clampGraphZoom(
+        gesture.startViewport.scale *
+          (touchDistance(event.touches) / gesture.startDistance),
+      );
+      const zoomed = zoomGraphAt(
+        gesture.startViewport,
+        scale,
+        gesture.startMidpoint,
+      );
+      setViewport({
+        ...zoomed,
+        x: zoomed.x + midpoint.x - gesture.startMidpoint.x,
+        y: zoomed.y + midpoint.y - gesture.startMidpoint.y,
+      });
+      return;
+    }
+    if (event.touches.length !== 1) return;
+
+    const point = touchPoint(event.touches[0]);
+    if (gesture.kind === "pan") {
+      setViewport({
+        ...gesture.startViewport,
+        x: gesture.startViewport.x + point.x - gesture.startPoint.x,
+        y: gesture.startViewport.y + point.y - gesture.startPoint.y,
+      });
+    } else if (gesture.kind === "node") {
+      onMoveNode(
+        gesture.nodeId,
+        gesture.nodeX + (point.x - gesture.startPoint.x) / gesture.scale,
+        gesture.nodeY + (point.y - gesture.startPoint.y) / gesture.scale,
+      );
+    }
+  };
+
+  const onTouchEnd = (event: React.TouchEvent) => {
+    event.preventDefault();
+    if (event.touches.length === 1) {
+      beginTouchGesture(event.touches, null);
+    } else if (event.touches.length === 0) {
+      touchGesture.current = null;
+      setDragging(false);
+    }
+  };
+
+  const zoomAtCenter = (factor: number) => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const current = viewportRef.current;
+    setViewport(
+      zoomGraphAt(current, current.scale * factor, {
+        x: rect.width / 2,
+        y: rect.height / 2,
+      }),
     );
   };
 
   return (
     <div
+      ref={containerRef}
       onPointerDown={onCanvasDown}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={() => {
+        touchGesture.current = null;
+        setDragging(false);
+      }}
+      onWheel={(event) => {
+        if (!event.ctrlKey) return;
+        event.preventDefault();
+        const current = viewportRef.current;
+        setViewport(
+          zoomGraphAt(
+            current,
+            current.scale * Math.exp(-event.deltaY * 0.01),
+            localPoint(event.clientX, event.clientY),
+          ),
+        );
+      }}
       className={`relative flex-1 overflow-hidden bg-ink bg-[linear-gradient(rgba(243,242,242,.05)_1px,transparent_1px),linear-gradient(90deg,rgba(243,242,242,.05)_1px,transparent_1px)] bg-[length:32px_32px] ${
         dragging ? "cursor-grabbing" : "cursor-grab"
       }`}
+      style={{
+        touchAction: "none",
+        backgroundPosition: `${viewport.x}px ${viewport.y}px`,
+        backgroundSize: `${32 * viewport.scale}px ${32 * viewport.scale}px`,
+      }}
     >
       <div
         className="absolute left-0 top-0"
-        style={{ transform: `translate(${pan.x}px,${pan.y}px)` }}
+        style={{
+          transform: `translate3d(${viewport.x}px,${viewport.y}px,0) scale(${viewport.scale})`,
+          transformOrigin: "0 0",
+        }}
       >
         <svg
           width="1320"
@@ -159,6 +363,7 @@ export default function WorkflowGraph({
           return (
             <div
               key={n.id}
+              data-workflow-node-id={n.id}
               onPointerDown={(e) => onNodeDown(e, n)}
               className="absolute flex cursor-grab select-none flex-col gap-1 px-[13px] py-2.5 transition-shadow duration-100"
               style={{
@@ -197,8 +402,39 @@ export default function WorkflowGraph({
         })}
       </div>
 
-      <div className="absolute bottom-3.5 left-4 flex gap-3.5 text-[10.5px] uppercase tracking-[.1em] text-bone/40">
-        <span>Drag nodes · drag canvas to pan</span>
+      <div className="pointer-events-none absolute bottom-3.5 left-4 flex gap-3.5 text-[10.5px] uppercase tracking-[.1em] text-bone/40">
+        <span>Drag nodes · drag to pan · pinch or Ctrl-scroll to zoom</span>
+      </div>
+
+      <div
+        className="absolute bottom-3.5 right-4 flex items-center border border-bone/[.26] bg-panel"
+        onPointerDown={(event) => event.stopPropagation()}
+        onTouchStart={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={() => zoomAtCenter(1 / 1.2)}
+          aria-label="Zoom out"
+          className="grid size-9 cursor-pointer place-items-center border-0 border-r border-bone/[.2] bg-transparent text-lg text-bone hover:bg-bone/[.07]"
+        >
+          −
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewport({ x: 0, y: 0, scale: 1 })}
+          aria-label={`Reset zoom, currently ${Math.round(viewport.scale * 100)} percent`}
+          className="h-9 min-w-14 cursor-pointer border-0 border-r border-bone/[.2] bg-transparent px-2 text-[11px] font-extrabold text-bone/65 hover:bg-bone/[.07]"
+        >
+          {Math.round(viewport.scale * 100)}%
+        </button>
+        <button
+          type="button"
+          onClick={() => zoomAtCenter(1.2)}
+          aria-label="Zoom in"
+          className="grid size-9 cursor-pointer place-items-center border-0 bg-transparent text-lg text-bone hover:bg-bone/[.07]"
+        >
+          +
+        </button>
       </div>
     </div>
   );
