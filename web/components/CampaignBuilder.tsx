@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import {
+  ContactCsvError,
+  MAX_CONTACT_CSV_BYTES,
+  parseContactCsv,
+} from '@/lib/campaigns/contact-csv';
 import type {
   CampaignLocale,
   CallResult,
@@ -24,16 +29,6 @@ const newContact = (name = '', phoneNumber = ''): Contact => ({
   name,
   phoneNumber,
 });
-
-function parseCsv(csv: string): Contact[] {
-  return csv
-    .split('\n')
-    .filter((line) => line.trim())
-    .map((line) => {
-      const [name, phone] = line.split(',');
-      return newContact((name ?? '').trim(), (phone ?? '').trim());
-    });
-}
 
 function errorMessage(value: unknown): string {
   if (typeof value !== 'object' || value === null) return 'The request failed.';
@@ -97,6 +92,12 @@ export default function CampaignBuilder({
   const [contacts, setContacts] = useState(initialContacts);
   const [entry, setEntry] = useState<Entry>('rows');
   const [csv, setCsv] = useState(initialCsv);
+  const [csvDragging, setCsvDragging] = useState(false);
+  const [csvImporting, setCsvImporting] = useState(false);
+  const [csvFeedback, setCsvFeedback] = useState<{
+    kind: 'success' | 'error';
+    message: string;
+  } | null>(null);
   const [preview, setPreview] = useState<CampaignLaunchPreview | null>(null);
   const [previewApproved, setPreviewApproved] = useState(false);
   const [recipientAuthorized, setRecipientAuthorized] = useState(false);
@@ -108,7 +109,6 @@ export default function CampaignBuilder({
   const [failureMessage, setFailureMessage] = useState(initialFailureMessage);
 
   const locked = campaignStatus !== 'compiled';
-  const csvLines = csv.split('\n').filter((line) => line.trim()).length;
 
   const resetApproval = () => {
     setPreview(null);
@@ -157,6 +157,70 @@ export default function CampaignBuilder({
         contact.id === id ? { ...contact, ...patch } : contact,
       ),
     );
+  };
+
+  const extractCsvText = (text: string, source: string) => {
+    setCsv(text);
+    try {
+      const imported = parseContactCsv(text);
+      setContacts(
+        imported.map((contact) =>
+          newContact(contact.name, contact.phoneNumber),
+        ),
+      );
+      setCsvFeedback({
+        kind: 'success',
+        message: `${imported.length} contact${imported.length === 1 ? '' : 's'} extracted from ${source}.`,
+      });
+      setEntry('rows');
+    } catch (caught) {
+      setCsvFeedback({
+        kind: 'error',
+        message:
+          caught instanceof ContactCsvError
+            ? caught.issues.join('; ')
+            : 'The CSV could not be read.',
+      });
+      setEntry('csv');
+    }
+  };
+
+  const waitForImportPaint = () =>
+    new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+  const importCsvText = async (text: string, source: string) => {
+    if (csvImporting) return;
+    resetApproval();
+    setCsvImporting(true);
+    try {
+      await waitForImportPaint();
+      extractCsvText(text, source);
+    } finally {
+      setCsvImporting(false);
+    }
+  };
+
+  const importCsvFile = async (file: File) => {
+    if (csvImporting) return;
+    resetApproval();
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setCsvFeedback({ kind: 'error', message: 'Choose a file with a .csv extension.' });
+      return;
+    }
+    if (file.size > MAX_CONTACT_CSV_BYTES) {
+      setCsvFeedback({ kind: 'error', message: 'CSV files must be 256 KB or smaller.' });
+      return;
+    }
+
+    setCsvImporting(true);
+    try {
+      await waitForImportPaint();
+      extractCsvText(await file.text(), file.name);
+    } catch {
+      setCsvFeedback({ kind: 'error', message: 'The selected CSV file could not be read.' });
+    } finally {
+      setCsvImporting(false);
+    }
   };
 
   const requestPreview = async () => {
@@ -337,12 +401,25 @@ export default function CampaignBuilder({
                         : 'bg-transparent text-bone'
                     }`}
                   >
-                    {value === 'rows' ? 'Add rows' : 'Paste CSV'}
+                    {value === 'rows' ? 'Add rows' : 'Import CSV'}
                   </button>
                 ))}
               </div>
             ) : null}
           </div>
+
+          {csvFeedback ? (
+            <div
+              role={csvFeedback.kind === 'error' ? 'alert' : 'status'}
+              className={`mb-4 border p-3 text-xs leading-5 ${
+                csvFeedback.kind === 'error'
+                  ? 'border-red-400/50 bg-red-950/30 text-red-200'
+                  : 'border-emerald-300/35 bg-emerald-950/20 text-emerald-200'
+              }`}
+            >
+              {csvFeedback.message}
+            </div>
+          ) : null}
 
           {entry === 'rows' || locked ? (
             <div>
@@ -410,30 +487,84 @@ export default function CampaignBuilder({
             </div>
           ) : (
             <div>
+              <div
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  setCsvDragging(true);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'copy';
+                  setCsvDragging(true);
+                }}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setCsvDragging(false);
+                  }
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setCsvDragging(false);
+                  const file = event.dataTransfer.files[0];
+                  if (file && !csvImporting) void importCsvFile(file);
+                }}
+                className={`mb-3 border border-dashed px-5 py-7 text-center transition-colors ${
+                  csvDragging
+                    ? 'border-flame bg-flame/[.08]'
+                    : 'border-bone/[.3] bg-panel'
+                }`}
+              >
+                <div className="flex items-center justify-center gap-2 text-sm font-extrabold text-bone">
+                  {csvImporting ? (
+                    <span className="size-4 animate-spin rounded-full border-2 border-bone/25 border-t-flame" />
+                  ) : null}
+                  {csvImporting ? 'Extracting contacts…' : 'Drop a contact CSV here'}
+                </div>
+                <div className="mt-1 text-xs leading-5 text-bone/45">
+                  Finds Name and Phone columns and ignores the rest · maximum 10 contacts
+                </div>
+                <label className={`mt-4 inline-flex border border-bone/[.26] px-3.5 py-[9px] text-[13px] text-bone ${
+                  csvImporting ? 'cursor-wait opacity-50' : 'cursor-pointer hover:bg-bone/[.07]'
+                }`}>
+                  Choose CSV file
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    disabled={csvImporting}
+                    className="sr-only"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = '';
+                      if (file) void importCsvFile(file);
+                    }}
+                  />
+                </label>
+              </div>
               <textarea
                 value={csv}
+                disabled={csvImporting}
                 onChange={(event) => {
                   resetApproval();
                   setCsv(event.target.value);
+                  setCsvFeedback(null);
                 }}
-                placeholder="Marta Reyes, +14155550100"
+                placeholder={"Name,Phone\nMarta Reyes,'+14155550100'"}
                 className="min-h-[170px] w-full resize-y border border-bone/[.26] bg-panel p-3.5 font-mono text-[13px] leading-[1.7] text-bone outline-none placeholder:text-bone/25"
               />
               <div className="mt-3 flex items-center gap-3.5">
                 <button
                   type="button"
-                  onClick={() => {
-                    resetApproval();
-                    setContacts(parseCsv(csv));
-                    setEntry('rows');
-                  }}
-                  disabled={!csvLines || csvLines > 10}
-                  className="cursor-pointer border border-bone/[.26] bg-transparent px-3.5 py-[9px] text-[13px] text-bone hover:bg-bone/[.07] disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => void importCsvText(csv, 'pasted CSV')}
+                  disabled={!csv.trim() || csvImporting}
+                  className="inline-flex cursor-pointer items-center gap-2 border border-bone/[.26] bg-transparent px-3.5 py-[9px] text-[13px] text-bone hover:bg-bone/[.07] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Parse {csvLines} lines
+                  {csvImporting ? (
+                    <span className="size-3.5 animate-spin rounded-full border-2 border-bone/25 border-t-flame" />
+                  ) : null}
+                  {csvImporting ? 'Extracting…' : 'Extract contacts'}
                 </button>
                 <span className="text-xs text-bone/40">
-                  name, phone — maximum 10 lines
+                  Phone numbers must use strict E.164 format
                 </span>
               </div>
             </div>

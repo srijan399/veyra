@@ -3,6 +3,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import StepHeader from "@/components/StepHeader";
+import ProfileEditDialog from "@/components/ProfileEditDialog";
+import WorkflowDeleteButton from "@/components/WorkflowDeleteButton";
 import { callResults, campaigns, workflows } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { initialsFor } from "@/lib/initials";
@@ -98,7 +100,7 @@ function WorkflowCard({ workflow: w }: { workflow: SavedWorkflow }) {
         ))}
       </div>
 
-      <div className="mt-auto flex items-center gap-2">
+      <div className="mt-auto flex flex-wrap items-start gap-2">
         {w.compiledCampaignId ? (
           <Link
             href={`/campaign?campaign=${w.compiledCampaignId}`}
@@ -120,7 +122,8 @@ function WorkflowCard({ workflow: w }: { workflow: SavedWorkflow }) {
         >
           Open editor
         </Link>
-        <span className="ml-auto text-[11px] text-bone/35">{formatUpdated(w.updatedAt)}</span>
+        <WorkflowDeleteButton workflowId={w.id} />
+        <span className="w-full text-[11px] text-bone/35">{formatUpdated(w.updatedAt)}</span>
       </div>
     </div>
   );
@@ -213,8 +216,11 @@ export default async function ProfilePage() {
       <main className="flex-1 pb-[72px]">
         <div className="flex flex-wrap items-end justify-between gap-6 border-b-2 border-bone/[.26] px-[34px] pb-[22px] pt-[34px]">
           <div className="flex items-end gap-[18px]">
-            <span className="grid size-16 place-items-center border border-bone/[.26] bg-bone/10 text-xl font-extrabold tracking-[.04em] text-bone">
-              {initialsFor(user.fullName, user.email)}
+            <span
+              className="grid size-16 place-items-center border border-bone/[.26] bg-bone/10 bg-cover bg-center text-xl font-extrabold tracking-[.04em] text-bone"
+              style={user.avatarUrl ? { backgroundImage: `url(${user.avatarUrl})` } : undefined}
+            >
+              {user.avatarUrl ? null : initialsFor(user.fullName, user.email)}
             </span>
             <div>
               <div className={`${EYEBROW} mb-[5px]`}>Account</div>
@@ -228,12 +234,21 @@ export default async function ProfilePage() {
             </div>
           </div>
 
-          <Link
-            href="/"
-            className="inline-flex flex-none items-center gap-[9px] whitespace-nowrap bg-flame px-[17px] py-3 text-[13.5px] font-extrabold text-ink no-underline"
-          >
-            New workflow from prompt
-          </Link>
+          <div className="flex flex-wrap items-center gap-3">
+            <ProfileEditDialog
+              fullName={user.fullName}
+              companyName={user.companyName}
+              email={user.email}
+              avatarUrl={user.avatarUrl}
+              initials={initialsFor(user.fullName, user.email)}
+            />
+            <Link
+              href="/"
+              className="inline-flex flex-none items-center gap-[9px] whitespace-nowrap bg-flame px-[17px] py-3 text-[13.5px] font-extrabold text-ink no-underline"
+            >
+              New workflow from prompt
+            </Link>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 border-b-2 border-bone/[.26] sm:grid-cols-3">

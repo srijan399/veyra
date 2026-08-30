@@ -216,6 +216,7 @@ create table profiles (
 id uuid primary key references auth.users(id) on delete cascade,
 full_name text,
 company_name text,
+avatar_path text, private Supabase Storage object path,
 role text not null default 'business_user',
 created_at timestamptz default now()
 );
@@ -300,6 +301,7 @@ create table profiles (
 id uuid primary key references auth.users(id) on delete cascade,
 full_name text,
 company_name text,
+avatar_path text, private Supabase Storage object path,
 role text not null default 'business_user',
 created_at timestamptz default now()
 );
@@ -370,6 +372,13 @@ filter in application code.
   are written by the CALL-E webhook under the service role; nothing in the browser should
   be able to forge or edit the recorded outcome of a real phone call.
 - `processed_webhook_events` — RLS on, no policies, so only the service role reaches it.
+
+Profile images live in a private `profile-images` Supabase Storage bucket, not in Postgres
+and not in public user metadata. `profiles.avatar_path` stores only the private object path.
+Storage policies permit authenticated users to select, insert, and delete objects only when
+the first folder is their own auth UUID. The app uploads validated PNG/JPEG/WebP files through
+`PATCH /api/profile` and serves them through authenticated `GET /api/profile/image`; it never
+exposes a public bucket URL or long-lived signed URL.
 
 Four conventions apply to every policy, and each one is a trap if ignored:
 
@@ -466,7 +475,7 @@ be logged out at random, and it is very hard to debug after the fact.
 | `web/app/auth/AuthForm.tsx` | Shared login/signup form shell. |
 | `web/components/UserProvider.tsx` | `useUser()` context, plus `initialsFor()`. |
 | `web/components/AccountIndicator.tsx` | Header account tile and log-out control. |
-| `web/app/profile/page.tsx` | Account screen. Identity is real; the workflow cards are still sample data. |
+| `web/app/profile/page.tsx` | Account screen backed by the caller's RLS-scoped profile, workflows, campaigns, and live call results. Includes the profile-details/image dialog; fake-mode call rows are excluded from live metrics. |
 
 `getSessionUser()` uses `supabase.auth.getUser()`, not `getSession()` — getSession reads the
 cookie without verifying it and can be spoofed. The root layout resolves the user once and
@@ -980,8 +989,11 @@ outcomes (section 4.8), and the dashboard is on camera during the demo.
 /api/workflows/generate POST prompt -> generated Workflow, stores in Supabase
 /api/workflows/[id] GET fetch a workflow by id
 /api/workflows/[id] PATCH update a workflow (from the editor)
+/api/workflows/[id] DELETE delete an owned workflow and its cascaded history; reject scheduled/active campaigns
 /api/workflows/[id]/edit POST natural-language edit instruction -> updated Workflow via the engine, stores in Supabase
 /api/workflows/[id]/compile POST Workflow -> Calls API request (task + result_schema), stores in campaign
+/api/profile PATCH update the caller's name/company and optionally upload or remove a private profile image
+/api/profile/image GET serve the caller's private profile image
 /api/campaigns POST create a campaign from a compiled workflow + contacts
 /api/campaigns/[id]/launch POST create one idempotent CALL-E call per contact in the campaign
 /api/campaigns/[id]/results GET fetch structured call results for a campaign
@@ -997,6 +1009,12 @@ secret delivery URL plus event correlation. The cron route uses `CRON_SECRET` an
 health route is public but exposes only component status. Server lifecycle writers use the
 database owner only after those boundaries have correlated an owned campaign or known call
 run. See the Authentication section.
+
+The campaign builder accepts contact CSVs by paste, file picker, or drag and drop. Parsing
+happens locally in the browser, supports quoted fields plus common name/phone header aliases,
+and produces the same editable contact rows used by manual entry. Files are capped at 256 KB,
+imports at ten unique strict-E.164 recipients, and no upload is stored before the user requests
+the normal exact campaign preview.
 
 ---
 

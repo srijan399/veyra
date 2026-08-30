@@ -39,6 +39,8 @@ export const profiles = pgTable("profiles", {
     .references(() => authUsers.id, { onDelete: "cascade" }),
   fullName: text("full_name"),
   companyName: text("company_name"),
+  // Private Supabase Storage object path, never a public or signed URL.
+  avatarPath: text("avatar_path"),
   role: text("role").notNull().default("business_user"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });

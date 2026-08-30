@@ -34,8 +34,11 @@ export default function AccountIndicator({ active = false }: { active?: boolean 
           active ? 'border-flame text-blush' : 'border-bone/[.22] text-bone'
         }`}
       >
-        <span className="grid size-[26px] place-items-center bg-bone/[.12] text-[11px] font-extrabold">
-          {initialsFor(user.fullName, user.email)}
+        <span
+          className="grid size-[26px] place-items-center bg-bone/[.12] bg-cover bg-center text-[11px] font-extrabold"
+          style={user.avatarUrl ? { backgroundImage: `url(${user.avatarUrl})` } : undefined}
+        >
+          {user.avatarUrl ? null : initialsFor(user.fullName, user.email)}
         </span>
         <span className="max-w-[150px] truncate text-xs font-extrabold tracking-[.02em]">
           {user.fullName ?? user.email}

@@ -109,6 +109,22 @@ can reach the engine, while Render continues to use the engine's unauthenticated
 The repository-root `render.yaml` records the correct Render build, `$PORT`, and health
 settings.
 
+Contact CSVs can also be pasted, selected, or dropped onto the campaign builder. Veyra
+finds the Name and Phone columns among any unrelated columns, removes spreadsheet display
+apostrophes, validates strict E.164 phone numbers, and converts at most ten recipients into
+editable rows. Owned workflows can be
+deleted from the profile or editor after confirmation; deletion is refused while a related
+campaign is scheduled or active.
+
+The profile screen includes an Edit profile dialog for full name, company, and a private
+PNG/JPEG/WebP display image up to 2 MB. Images are stored under the user's UUID in a private
+Supabase Storage bucket and served only through the authenticated app route. Apply migration
+`0004_low_daredevil.sql` before using this dialog:
+
+```bash
+pnpm db:migrate
+```
+
 Apply the Phase 4 migration before opening a campaign from this version:
 
 ```bash
@@ -117,6 +133,10 @@ pnpm db:migrate
 
 ### Routes
 
+- `PATCH /api/profile` updates owned profile details and securely uploads/removes an image.
+- `GET /api/profile/image` returns only the signed-in user's private display image.
+- `DELETE /api/workflows/[id]` removes an owned workflow and its cascaded inactive
+  campaign history, while refusing deletion if a campaign is scheduled or active.
 - `POST /api/workflows/[id]/compile` validates/saves the edited workflow and creates an
   owned compiled campaign with one fictional reserved contact.
 - `POST /api/campaigns/[id]/compile` recompiles and persists the current first contact.

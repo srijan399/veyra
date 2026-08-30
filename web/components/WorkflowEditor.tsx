@@ -5,6 +5,7 @@ import { useState } from "react";
 import NodeInspector from "@/components/NodeInspector";
 import NodeTable from "@/components/NodeTable";
 import WorkflowGraph from "@/components/WorkflowGraph";
+import WorkflowDeleteButton from "@/components/WorkflowDeleteButton";
 import type { Workflow, WorkflowNode } from "@/types/workflow";
 
 type View = "graph" | "table";
@@ -120,6 +121,7 @@ export default function WorkflowEditor({
           >
             {compiling ? "Compiling…" : "Compile to Call"}
           </button>
+          <WorkflowDeleteButton workflowId={workflow.id} redirectTo="/profile" />
         </div>
       </div>
 

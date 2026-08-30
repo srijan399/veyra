@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import StepHeader from "@/components/StepHeader";
+import WorkflowDeleteButton from "@/components/WorkflowDeleteButton";
 import { workflows } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -80,21 +81,34 @@ export default async function WorkflowListPage() {
             {rows.map((row) => {
               const workflow = row.schema as Workflow;
               return (
-                <Link
+                <div
                   key={row.id}
-                  href={`/workflow/${row.id}`}
-                  className="flex flex-col gap-3.5 border-b border-r border-bone/[.14] px-[22px] pb-[18px] pt-5 no-underline hover:bg-panel-2"
+                  className="flex flex-col gap-3.5 border-b border-r border-bone/[.14] px-[22px] pb-[18px] pt-5"
                 >
-                  <div className="text-[10px] uppercase tracking-[.14em] text-ember">
-                    {workflow.nodes?.length ?? 0} nodes
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="text-[10px] uppercase tracking-[.14em] text-ember">
+                      {workflow.nodes?.length ?? 0} nodes
+                    </div>
+                    <WorkflowDeleteButton workflowId={row.id} />
                   </div>
-                  <p className="line-clamp-3 text-[15px] font-extrabold leading-tight tracking-[-.01em] text-bone">
+                  <Link
+                    href={`/workflow/${row.id}`}
+                    className="line-clamp-3 text-[15px] font-extrabold leading-tight tracking-[-.01em] text-bone no-underline hover:text-blush"
+                  >
                     {row.goal}
-                  </p>
-                  <span className="mt-auto text-[11px] text-bone/35">
-                    {formatUpdated(row.updatedAt)}
-                  </span>
-                </Link>
+                  </Link>
+                  <div className="mt-auto flex items-center justify-between gap-3">
+                    <span className="text-[11px] text-bone/35">
+                      {formatUpdated(row.updatedAt)}
+                    </span>
+                    <Link
+                      href={`/workflow/${row.id}`}
+                      className="text-[12px] font-extrabold text-bone/70 underline decoration-bone/25 underline-offset-4"
+                    >
+                      Open editor
+                    </Link>
+                  </div>
+                </div>
               );
             })}
           </div>

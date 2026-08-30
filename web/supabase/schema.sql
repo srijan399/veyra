@@ -34,6 +34,7 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   full_name text,
   company_name text,
+  avatar_path text,
   role text not null default 'business_user',
   created_at timestamptz default now()
 );
@@ -313,3 +314,47 @@ grant select, insert, update, delete on public.workflows    to authenticated;
 grant select, insert, update, delete on public.campaigns    to authenticated;
 grant select, insert, update, delete on public.contacts     to authenticated;
 grant select                         on public.call_results to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- 6. Private profile-image storage
+-- ---------------------------------------------------------------------------
+-- Only the authenticated owner can read, create, or remove objects inside their UUID
+-- folder. Application code stores the private object path in profiles.avatar_path and
+-- serves it through an authenticated same-origin route rather than exposing a public URL.
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'profile-images',
+  'profile-images',
+  false,
+  2097152,
+  array['image/png', 'image/jpeg', 'image/webp']
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "profile_images_select_own" on storage.objects;
+create policy "profile_images_select_own" on storage.objects
+  for select to authenticated
+  using (
+    bucket_id = 'profile-images'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  );
+
+drop policy if exists "profile_images_insert_own" on storage.objects;
+create policy "profile_images_insert_own" on storage.objects
+  for insert to authenticated
+  with check (
+    bucket_id = 'profile-images'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  );
+
+drop policy if exists "profile_images_delete_own" on storage.objects;
+create policy "profile_images_delete_own" on storage.objects
+  for delete to authenticated
+  using (
+    bucket_id = 'profile-images'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  );

@@ -18,6 +18,7 @@ const PROTECTED_PREFIXES = [
   '/campaign',
   '/campaigns',
   '/profile',
+  '/api/profile',
   '/api/workflows',
   '/api/campaigns',
   '/api/calls',
