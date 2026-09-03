@@ -1,5 +1,5 @@
 from app.calle_schema import assert_calle_schema_subset
-from app.compiler import compile_workflow
+from app.compiler import ESCAPE_HATCH, compile_workflow
 from app.models.campaign import Contact
 from app.sample_workflow import SAMPLE_WORKFLOW
 
@@ -109,5 +109,47 @@ def test_result_schema_includes_next_step_enum():
         SAMPLE_WORKFLOW, "campaign-1", _contact(), "https://example.com/api/calle/webhook"
     )
     next_step = request.result_schema["properties"]["next_step"]
-    assert next_step["enum"] == SAMPLE_WORKFLOW.outcome_schema.next_step
-    assert "next_step" in request.result_schema["required"]
+    assert next_step["enum"] == [*SAMPLE_WORKFLOW.outcome_schema.next_step, ESCAPE_HATCH]
+
+
+def test_no_result_field_is_required():
+    """A partial extraction must stay schema-valid. Requiring fields makes CALL-E
+    return structured_result: null for the whole call — discarding the fields that did
+    extract — whenever one answer is missing or unmappable."""
+    request = compile_workflow(
+        SAMPLE_WORKFLOW, "campaign-1", _contact(), "https://example.com/api/calle/webhook"
+    )
+    assert "required" not in request.result_schema
+    for field in request.result_schema["properties"].values():
+        assert "required" not in field
+
+
+def test_every_enum_offers_an_escape_hatch():
+    """Model-generated enums routinely miss real answers ("April 2027" against
+    september/january/may), so each one needs an explicit out."""
+    request = compile_workflow(
+        SAMPLE_WORKFLOW, "campaign-1", _contact(), "https://example.com/api/calle/webhook"
+    )
+    enums = [
+        field["enum"]
+        for field in request.result_schema["properties"].values()
+        if "enum" in field
+    ]
+    assert enums, "sample workflow should exercise at least one enum field"
+    for values in enums:
+        assert ESCAPE_HATCH in values
+
+    # The task text must offer the same dispositions the schema accepts.
+    assert ESCAPE_HATCH in request.task
+
+
+def test_escape_hatch_is_not_duplicated():
+    workflow = SAMPLE_WORKFLOW.model_copy(deep=True)
+    workflow.outcome_schema.next_step = ["book_advisor", ESCAPE_HATCH]
+    request = compile_workflow(
+        workflow, "campaign-1", _contact(), "https://example.com/api/calle/webhook"
+    )
+    assert request.result_schema["properties"]["next_step"]["enum"] == [
+        "book_advisor",
+        ESCAPE_HATCH,
+    ]

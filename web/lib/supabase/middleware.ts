@@ -4,9 +4,11 @@ import { NextResponse, type NextRequest } from 'next/server';
 /**
  * Route prefixes that require a signed-in user. Matched on exact path or `prefix/...`, so
  * `/workflow` and `/workflow/abc` are both covered while a hypothetical `/workflow-docs`
- * is not. Singular and plural forms are both listed: the pages are singular today, the
- * API routes in TECHNICAL_ARCH.md section 10 are plural, and the guard should hold either
- * way rather than quietly stop matching after a rename.
+ * is not. Singular and plural forms are both listed for the workflow pages: `/workflow`
+ * is the page route, `/workflows` (see TECHNICAL_ARCH.md section 10) is the API
+ * namespace, and the guard should hold either way rather than quietly stop matching after
+ * a rename. Campaign pages are plural-only (`/campaigns`, `/results`) — there is no
+ * singular `/campaign` route.
  *
  * This is a UX guard, not the security boundary — it stops unauthenticated users landing
  * on an empty screen. The real enforcement is RLS in Postgres plus `requireUser()` in
@@ -15,8 +17,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 const PROTECTED_PREFIXES = [
   '/workflow',
   '/workflows',
-  '/campaign',
   '/campaigns',
+  '/results',
   '/profile',
   '/api/profile',
   '/api/workflows',

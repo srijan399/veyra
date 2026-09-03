@@ -47,72 +47,76 @@ export default async function WorkflowListPage() {
     <div className="flex min-h-screen flex-col bg-ink">
       <StepHeader current="workflow" />
 
-      <main className="flex-1 pb-[72px]">
-        <div className="flex flex-wrap items-end justify-between gap-6 border-b-2 border-bone/[.26] px-[34px] pb-[22px] pt-[34px]">
-          <div>
-            <div className={`${EYEBROW} mb-[5px]`}>Your workflows</div>
-            <h1 className="text-3xl font-extrabold tracking-[-.01em] text-bone">
-              {rows.length} generated workflow{rows.length === 1 ? "" : "s"}
-            </h1>
-          </div>
-          <Link
-            href="/"
-            className="inline-flex flex-none items-center gap-[9px] whitespace-nowrap bg-flame px-[17px] py-3 text-[13.5px] font-extrabold text-ink no-underline"
-          >
-            New workflow from prompt
-          </Link>
-        </div>
-
-        {rows.length === 0 ? (
-          <div className="flex flex-col items-start gap-4 px-[34px] py-16">
-            <p className="max-w-md text-[14px] leading-[1.55] text-bone/55">
-              No workflows yet. Describe a calling process on the Prompt step and Veyra
-              will generate an editable one here.
-            </p>
+      <main className="flex-1 px-6 pb-[72px] md:px-12">
+        <div className="mx-auto w-full max-w-210">
+          <div className="flex flex-wrap items-end justify-between gap-6 border-b-2 border-bone/[.26] pb-[22px] pt-[34px]">
+            <div>
+              <div className={`${EYEBROW} mb-[5px]`}>Your workflows</div>
+              <h1 className="text-3xl font-extrabold tracking-[-.01em] text-bone">
+                {rows.length} generated workflow{rows.length === 1 ? "" : "s"}
+              </h1>
+            </div>
             <Link
               href="/"
-              className="border border-bone/[.26] px-3.5 py-[9px] text-[12.5px] font-extrabold text-bone no-underline"
+              className="inline-flex flex-none items-center gap-[9px] whitespace-nowrap bg-flame px-[17px] py-3 text-[13.5px] font-extrabold text-ink no-underline"
             >
-              Go to Prompt
+              New workflow from prompt
             </Link>
           </div>
-        ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] border-t border-bone/[.18]">
-            {rows.map((row) => {
-              const workflow = row.schema as Workflow;
-              return (
-                <div
-                  key={row.id}
-                  className="flex flex-col gap-3.5 border-b border-r border-bone/[.14] px-[22px] pb-[18px] pt-5"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="text-[10px] uppercase tracking-[.14em] text-ember">
-                      {workflow.nodes?.length ?? 0} nodes
-                    </div>
-                    <WorkflowDeleteButton workflowId={row.id} />
-                  </div>
-                  <Link
-                    href={`/workflow/${row.id}`}
-                    className="line-clamp-3 text-[15px] font-extrabold leading-tight tracking-[-.01em] text-bone no-underline hover:text-blush"
+
+          {rows.length === 0 ? (
+            <div className="flex flex-col items-start gap-4 py-16">
+              <p className="max-w-md text-[14px] leading-[1.55] text-bone/55">
+                No workflows yet. Describe a calling process on the Prompt step and Veyra
+                will generate an editable one here.
+              </p>
+              <Link
+                href="/"
+                className="border border-bone/[.26] px-3.5 py-[9px] text-[12.5px] font-extrabold text-bone no-underline"
+              >
+                Go to Prompt
+              </Link>
+            </div>
+          ) : (
+            <div className="flex flex-col border-t border-bone/[.18]">
+              {rows.map((row) => {
+                const workflow = row.schema as Workflow;
+                return (
+                  <div
+                    key={row.id}
+                    className="flex items-center gap-4 border-b border-bone/[.14] py-4 hover:bg-bone/[.03]"
                   >
-                    {row.goal}
-                  </Link>
-                  <div className="mt-auto flex items-center justify-between gap-3">
-                    <span className="text-[11px] text-bone/35">
-                      {formatUpdated(row.updatedAt)}
-                    </span>
-                    <Link
-                      href={`/workflow/${row.id}`}
-                      className="text-[12px] font-extrabold text-bone/70 underline decoration-bone/25 underline-offset-4"
-                    >
-                      Open editor
-                    </Link>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2.5">
+                        <span className="flex-none text-[10px] uppercase tracking-[.14em] text-ember">
+                          {workflow.nodes?.length ?? 0} nodes
+                        </span>
+                        <Link
+                          href={`/workflow/${row.id}`}
+                          className="truncate text-[15px] font-extrabold tracking-[-.01em] text-bone no-underline hover:text-blush"
+                        >
+                          {row.goal}
+                        </Link>
+                      </div>
+                    </div>
+                    <div className="flex flex-none items-center gap-4">
+                      <span className="hidden whitespace-nowrap text-[11px] text-bone/35 sm:inline">
+                        {formatUpdated(row.updatedAt)}
+                      </span>
+                      <Link
+                        href={`/workflow/${row.id}`}
+                        className="whitespace-nowrap text-[12px] font-extrabold text-bone/70 underline decoration-bone/25 underline-offset-4"
+                      >
+                        Open editor
+                      </Link>
+                      <WorkflowDeleteButton workflowId={row.id} />
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );

@@ -28,6 +28,65 @@
       transform: none;
     }
   }
+
+  /* Live-call orb (components/CallInFlight.tsx). Each ring spins around an axis that
+     lies in its own plane, so it visibly flattens and reopens — a circle spun around
+     its own normal axis would look motionless. */
+  --animate-call-ring-a: call-ring-a 2.6s linear infinite;
+  --animate-call-ring-b: call-ring-b 3.4s linear infinite;
+  --animate-call-ring-c: call-ring-c 4.6s linear infinite;
+  --animate-call-core: call-core 1.5s ease-in-out infinite;
+  --animate-call-bar: call-bar 0.85s ease-in-out infinite alternate;
+
+  @keyframes call-ring-a {
+    from {
+      transform: rotateY(0deg);
+    }
+    to {
+      transform: rotateY(360deg);
+    }
+  }
+
+  @keyframes call-ring-b {
+    from {
+      transform: rotateX(0deg);
+    }
+    to {
+      transform: rotateX(360deg);
+    }
+  }
+
+  @keyframes call-ring-c {
+    from {
+      transform: rotateZ(58deg) rotateY(0deg);
+    }
+    to {
+      transform: rotateZ(58deg) rotateY(360deg);
+    }
+  }
+
+  /* The translate is baked in: this keyframe owns `transform`, so it would otherwise
+     override the centring utilities on the same element. */
+  @keyframes call-core {
+    0%,
+    100% {
+      transform: translate(-50%, -50%) scale(0.82);
+      opacity: 0.72;
+    }
+    50% {
+      transform: translate(-50%, -50%) scale(1.12);
+      opacity: 1;
+    }
+  }
+
+  @keyframes call-bar {
+    from {
+      transform: scaleY(0.22);
+    }
+    to {
+      transform: scaleY(1);
+    }
+  }
 }
 
 html,
