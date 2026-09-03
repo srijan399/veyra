@@ -98,6 +98,7 @@ export default function CampaignBuilder({
   const [recipientAuthorized, setRecipientAuthorized] = useState(false);
   const [pending, setPending] = useState<PendingAction>(null);
   const [error, setError] = useState<string | null>(null);
+  const [rerunning, setRerunning] = useState(false);
   const campaignStatus = initialStatus;
 
   const locked = campaignStatus !== 'compiled';
@@ -259,6 +260,24 @@ export default function CampaignBuilder({
     previewApproved &&
     (!preview?.recipientAuthorizationRequired || recipientAuthorized) &&
     pending === null;
+
+  const rerunCampaign = async () => {
+    setRerunning(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/campaigns/${campaignId}/rerun`, { method: 'POST' });
+      const body: unknown = await response.json();
+      if (!response.ok) throw new Error(errorMessage(body));
+      const rerun = body as { campaignId?: unknown };
+      if (typeof rerun.campaignId !== 'string') {
+        throw new Error('The response did not include a campaign id.');
+      }
+      router.push(`/campaigns/${rerun.campaignId}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Campaign could not be re-run.');
+      setRerunning(false);
+    }
+  };
 
   return (
     <main className="flex-1 px-6 pb-[72px] pt-[52px] md:px-12">
@@ -642,7 +661,32 @@ export default function CampaignBuilder({
               </section>
             ) : null}
           </div>
-        ) : null}
+        ) : (
+          <div className={`mt-10 pt-6 ${RULE}`}>
+            <div className={`${KICKER} mb-3`}>03 · This campaign is locked</div>
+            <p className="mb-4 max-w-[700px] text-[13px] leading-6 text-bone/55">
+              {campaignStatus === 'failed'
+                ? "This campaign didn't complete. Re-run it to try the same workflow and contacts again."
+                : 'This campaign has already been submitted and can no longer be edited or launched again. Re-run it to start a fresh copy with the same workflow and contacts.'}
+            </p>
+            <div className="flex flex-wrap items-center gap-3.5">
+              <button
+                type="button"
+                onClick={rerunCampaign}
+                disabled={rerunning}
+                className="inline-flex cursor-pointer items-center gap-2.5 border-0 bg-flame px-5 py-[13px] text-sm font-extrabold text-ink disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {rerunning ? 'Setting up a new campaign…' : 'Re-run campaign'}
+              </button>
+              <a
+                href={`/results/${campaignId}`}
+                className="text-[12px] font-extrabold text-bone/70 underline decoration-bone/25 underline-offset-4"
+              >
+                View results
+              </a>
+            </div>
+          </div>
+        )}
 
         {error ? (
           <div
