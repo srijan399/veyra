@@ -18,19 +18,28 @@ export interface CompiledCampaignDraft {
 
 /**
  * Compiles a workflow into the exact Calls API request for a single seed contact and
- * builds the validated safe call draft. Shared by both campaign-creation entry points
- * (the workflow editor's "Compile to Call" and the campaigns list's "New Campaign" flow)
- * so the CALL-E-adjacent compile/validation logic exists in exactly one place. Each
- * caller still owns its own database transaction for the campaign/contact insert, since
- * the two entry points differ in what else that transaction needs to do.
+ * builds the validated safe call draft. Shared by all campaign-creation entry points
+ * (the workflow editor's "Compile to Call", the campaigns list's "New Campaign" flow,
+ * and re-running a past campaign) so the CALL-E-adjacent compile/validation logic
+ * exists in exactly one place. Each caller still owns its own database transaction for
+ * the campaign/contact insert, since entry points differ in what else that transaction
+ * needs to do — re-running, for instance, inserts every original contact, not just this
+ * one seed.
  */
 export async function compileWorkflowForCampaign(params: {
   workflow: Workflow;
   campaignId: string;
   name?: string;
+  /** Defaults to a fictional sample contact — see lib/sample-campaign.ts. */
+  seedContact?: Omit<Contact, "id">;
 }): Promise<CompiledCampaignDraft> {
-  const sample = SAMPLE_CONTACTS[0];
-  const contact: Contact = { id: randomUUID(), name: sample.name, phoneNumber: sample.phoneNumber };
+  const sample = params.seedContact ?? SAMPLE_CONTACTS[0];
+  const contact: Contact = {
+    id: randomUUID(),
+    name: sample.name,
+    phoneNumber: sample.phoneNumber,
+    ...(sample.metadata ? { metadata: sample.metadata } : {}),
+  };
 
   const compiled = await compileWorkflow({
     workflow: params.workflow,

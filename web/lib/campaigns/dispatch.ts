@@ -1,6 +1,6 @@
 import "server-only";
 
-import { assertApprovedCallReady, executeApprovedCall } from "@/lib/calle/client";
+import { assertApprovedCallReady, CallConfigurationError, executeApprovedCall } from "@/lib/calle/client";
 import type { PreparedCampaignCall, PreparedCampaignLaunch } from "@/lib/campaigns/lifecycle";
 import {
   recordCallSubmission,
@@ -54,7 +54,17 @@ export async function processCallDispatchJob(job: CallDispatchJob): Promise<void
   try {
     const execution = await executeApprovedCall(call.draft, call.preview);
     await recordCallSubmission({ campaignId, callResultId: call.callResultId, execution });
-  } catch {
-    await recordSubmissionFailure({ campaignId, callResultId: call.callResultId });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[dispatch] call submission failed (campaignId=${campaignId} callResultId=${call.callResultId}):`,
+      error,
+    );
+    await recordSubmissionFailure({
+      campaignId,
+      callResultId: call.callResultId,
+      reason,
+      code: error instanceof CallConfigurationError ? "configuration_error" : "submission_error",
+    });
   }
 }

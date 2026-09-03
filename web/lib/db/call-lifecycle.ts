@@ -183,14 +183,21 @@ export async function recordCallSubmission(params: {
 export async function recordSubmissionFailure(params: {
   campaignId: string;
   callResultId: string;
+  /** The caught error's own message — see processCallDispatchJob in lib/campaigns/dispatch.ts. */
+  reason: string;
+  /** Defaults to a generic submission error; pass a more specific code when known. */
+  code?: string;
 }): Promise<void> {
+  const failureMessage =
+    `${params.reason} — CALL-E did not confirm whether it accepted this call; ` +
+    "no automatic retry was attempted.";
   await getDb().transaction(async (tx) => {
     await tx
       .update(callResults)
       .set({
         status: "submission_uncertain",
-        failureCode: "submission_error",
-        failureMessage: "CALL-E did not confirm whether it accepted this call. No automatic retry was attempted.",
+        failureCode: params.code ?? "submission_error",
+        failureMessage: failureMessage.slice(0, 500),
         completedAt: new Date(),
       })
       .where(
