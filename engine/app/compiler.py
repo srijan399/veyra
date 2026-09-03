@@ -140,9 +140,19 @@ def _render_task(workflow: Workflow, contact: Contact) -> str:
     if workflow.outcome_schema.next_step:
         sections.append(
             "At the end of the call, choose exactly one next-step disposition from: "
-            + ", ".join(workflow.outcome_schema.next_step)
+            + ", ".join(_with_escape_hatch(workflow.outcome_schema.next_step))
             + "."
         )
+
+    # No result field is mandatory (see _render_result_schema), so say what to do with
+    # the ones the conversation never settled — otherwise the temptation is to guess a
+    # value, which the safety rules above already forbid.
+    sections.append(
+        "Result reporting: Report every field the conversation actually established. "
+        f'For a field with listed options, use "{ESCAPE_HATCH}" when the recipient gave a '
+        "definite answer that none of the options cover. Omit a field entirely when it "
+        "was never established, and never guess or invent a value to fill one."
+    )
 
     return "\n\n".join(sections)
 
@@ -165,26 +175,50 @@ def _format_number(value: float) -> str:
     return str(value)
 
 
+ESCAPE_HATCH = "other"
+_ESCAPE_HATCH_HINT = f'Use "{ESCAPE_HATCH}" if the answer does not match any listed option.'
+
+
+def _with_escape_hatch(values: list[str]) -> list[str]:
+    """Every generated enum gets an explicit "answer outside this list" member.
+
+    CALL-E validates its extraction against this schema and returns
+    structured_result: null (a `call.result_validation_failed` event) when it cannot
+    produce a valid value. A model-generated enum routinely misses real answers — a
+    start-date enum of september/january/may against "April 2027", or a funding enum
+    with no room for "not sure yet" — and without an escape hatch the whole result is
+    discarded, including the fields that extracted perfectly. Note this is distinct
+    from an "undecided"-style member the generator may already emit: that means no
+    answer yet, whereas this means a definite answer that simply is not listed."""
+    return values if ESCAPE_HATCH in values else [*values, ESCAPE_HATCH]
+
+
+def _describe_enum(description: str | None) -> str:
+    if not description:
+        return _ESCAPE_HATCH_HINT
+    separator = " " if description.rstrip().endswith((".", "!", "?")) else ". "
+    return f"{description.rstrip()}{separator}{_ESCAPE_HATCH_HINT}"
+
+
 def _render_result_schema(outcome_schema: OutcomeSchema) -> dict:
     properties = {f.name: _field_to_schema(f) for f in outcome_schema.fields}
-    required = [f.name for f in outcome_schema.fields if f.required]
 
     if outcome_schema.next_step:
         properties["next_step"] = {
             "type": "string",
-            "description": "The call's next-step disposition.",
-            "enum": outcome_schema.next_step,
+            "description": _describe_enum("The call's next-step disposition."),
+            "enum": _with_escape_hatch(outcome_schema.next_step),
         }
-        required.append("next_step")
 
-    schema: dict = {
+    # Deliberately no "required": a call that ends early, or an answer no enum member
+    # covers, would otherwise fail CALL-E's result validation and throw away every
+    # field that did extract. The per-field `required` flag stays part of the workflow
+    # schema as authoring intent — it is just not enforced as a CALL-E hard gate.
+    return {
         "type": "object",
         "properties": properties,
         "additionalProperties": False,
     }
-    if required:
-        schema["required"] = required
-    return schema
 
 
 def _field_to_schema(f: OutcomeField) -> dict:
@@ -192,15 +226,13 @@ def _field_to_schema(f: OutcomeField) -> dict:
     if f.description:
         schema["description"] = f.description
     if f.enum_values:
-        schema["enum"] = f.enum_values
+        schema["enum"] = _with_escape_hatch(f.enum_values)
+        schema["description"] = _describe_enum(f.description)
 
     if f.type == "object":
         properties = f.properties or []
         schema["properties"] = {p.name: _field_to_schema(p) for p in properties}
         schema["additionalProperties"] = False
-        required = [p.name for p in properties if p.required]
-        if required:
-            schema["required"] = required
 
     if f.type == "array":
         schema["items"] = _field_to_schema(f.items) if f.items else {"type": "string"}

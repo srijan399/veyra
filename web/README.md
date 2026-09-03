@@ -166,15 +166,13 @@ Live mode fails closed and requires every server-side gate below:
 
 1. Set `CALL_MODE=live` and `CALLE_LIVE_ENABLED=true`.
 2. Set `CALLE_API_KEY`.
-3. Set `CALLE_TEST_RECIPIENT_E164` to one explicitly authorized test recipient. Only that
-   exact number can be called.
-4. Set `CALLE_LIVE_WINDOW_START` and `CALLE_LIVE_WINDOW_END` to a currently active ISO-8601
-   window no longer than four hours.
-5. Keep `CALLE_BASE_URL=https://api.heycall-e.com`.
-6. Set public HTTPS `APP_URL` and a random `CALLE_WEBHOOK_TOKEN` of at least 32 characters.
-7. In the UI, preview the exact call, approve it, and separately confirm recipient
+3. Keep `CALLE_BASE_URL=https://api.heycall-e.com`.
+4. Set public HTTPS `APP_URL` and a random `CALLE_WEBHOOK_TOKEN` of at least 32 characters.
+5. In the UI, preview the exact call, approve it, and separately confirm recipient
    authorization.
 
 A successful live submission may consume CALL-E credit and cannot be cancelled by Veyra
-after dispatch. Run live tests only with a recipient who has explicitly agreed to that
-specific call. Do not use the fictional sample numbers in live mode.
+after dispatch. Live mode is no longer restricted to a single pre-authorized recipient or
+time window — it will call whatever number is in the compiled contact/campaign, so verify
+every recipient by hand before launching. Do not use the fictional sample numbers in live
+mode.

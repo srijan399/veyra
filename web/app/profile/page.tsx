@@ -103,7 +103,7 @@ function WorkflowCard({ workflow: w }: { workflow: SavedWorkflow }) {
       <div className="mt-auto flex flex-wrap items-start gap-2">
         {w.compiledCampaignId ? (
           <Link
-            href={`/campaign?campaign=${w.compiledCampaignId}`}
+            href={`/campaigns/${w.compiledCampaignId}`}
             className="bg-flame px-3.5 py-[9px] text-[12.5px] font-extrabold text-ink no-underline"
           >
             Prepare for CALL-E

@@ -72,7 +72,7 @@ export default function WorkflowEditor({
         throw new Error("The compiler response did not include a campaign id.");
       }
       setDirty(false);
-      router.push(`/campaign?campaign=${encodeURIComponent(campaignId)}`);
+      router.push(`/campaigns/${encodeURIComponent(campaignId)}`);
     } catch (error) {
       setCompileError(error instanceof Error ? error.message : "Workflow compilation failed");
       setCompiling(false);

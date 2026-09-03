@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  assertScheduledCallReady,
-  executeApprovedCall,
-  getCallMode,
-} from "../lib/calle/client";
+import { executeApprovedCall, getCallMode } from "../lib/calle/client";
 import {
   createCallPreview,
   isE164,
@@ -188,42 +184,16 @@ test("live execution fails closed before loading the SDK", async () => {
     },
   );
 
-  const start = new Date(Date.now() - 60_000).toISOString();
-  const end = new Date(Date.now() + 60_000).toISOString();
   await withEnvironment(
     {
       CALL_MODE: "live",
       CALLE_LIVE_ENABLED: "true",
-      CALLE_API_KEY: "present-but-insufficient",
-      CALLE_TEST_RECIPIENT_E164: "+14155550101",
-      CALLE_LIVE_WINDOW_START: start,
-      CALLE_LIVE_WINDOW_END: end,
+      CALLE_API_KEY: undefined,
     },
     async () => {
       await assert.rejects(
         () => executeApprovedCall(parsed, preview),
-        /only permits the configured test recipient/,
-      );
-    },
-  );
-});
-
-test("a scheduled live call must remain inside the live safety window", async () => {
-  const start = new Date(Date.now() - 60_000).toISOString();
-  const end = new Date(Date.now() + 60_000).toISOString();
-  await withEnvironment(
-    {
-      CALL_MODE: "live",
-      CALLE_LIVE_ENABLED: "true",
-      CALLE_API_KEY: "present",
-      CALLE_TEST_RECIPIENT_E164: draft.phone,
-      CALLE_LIVE_WINDOW_START: start,
-      CALLE_LIVE_WINDOW_END: end,
-    },
-    () => {
-      assert.throws(
-        () => assertScheduledCallReady(parseCallDraft(draft), new Date(Date.now() + 120_000)),
-        /inside the configured live call window/,
+        /CALLE_API_KEY is required/,
       );
     },
   );

@@ -5,7 +5,6 @@ import { NextResponse } from "next/server";
 
 import {
   assertApprovedCallReady,
-  assertScheduledCallReady,
   getCallMode,
   CallConfigurationError,
 } from "@/lib/calle/client";
@@ -125,9 +124,7 @@ export async function POST(request: Request, context: Params) {
 
     if (loaded.scheduledAt && loaded.scheduledAt.getTime() > Date.now()) {
       for (const call of prepared.calls) {
-        // Fail closed at approval time as well as at scheduled dispatch time.
         assertApprovedCallReady(call.draft, call.preview);
-        assertScheduledCallReady(call.draft, loaded.scheduledAt);
       }
       const scheduled = await scheduleCampaign({
         userId: auth.user.id,
@@ -166,8 +163,8 @@ export async function POST(request: Request, context: Params) {
     }
 
     return NextResponse.json(
-      { campaignId: id, mode, runs: dispatch.runs },
-      { status: mode === "live" ? 202 : 200 },
+      { campaignId: id, mode, status: "launching" },
+      { status: 202 },
     );
   } catch (error) {
     if (error instanceof CallHttpError) {

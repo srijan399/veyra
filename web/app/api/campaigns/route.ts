@@ -13,60 +13,71 @@ import { requireUser } from "@/lib/supabase/auth";
 import type { Workflow } from "@/types/workflow";
 
 export const runtime = "nodejs";
-type Params = { params: Promise<{ id: string }> };
 
-function workflowFromBody(value: unknown, id: string): Workflow {
+interface NewCampaignInput {
+  workflowId: string;
+  name?: string;
+}
+
+function parseInput(value: unknown): NewCampaignInput {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new CampaignInputError(["request body must be a JSON object"]);
   }
   const body = value as Record<string, unknown>;
-  const unknown = Object.keys(body).filter((key) => key !== "workflow");
+  const unknown = Object.keys(body).filter((key) => key !== "workflowId" && key !== "name");
   if (unknown.length) {
     throw new CampaignInputError([`request contains unknown field(s): ${unknown.join(", ")}`]);
   }
-  if (
-    typeof body.workflow !== "object" ||
-    body.workflow === null ||
-    Array.isArray(body.workflow)
-  ) {
-    throw new CampaignInputError(["workflow is required"]);
+  if (typeof body.workflowId !== "string" || !body.workflowId) {
+    throw new CampaignInputError(["workflowId is required"]);
   }
-  return { ...(body.workflow as Workflow), id };
+  if (body.name !== undefined && typeof body.name !== "string") {
+    throw new CampaignInputError(["name must be a string"]);
+  }
+  return {
+    workflowId: body.workflowId,
+    ...(typeof body.name === "string" ? { name: body.name } : {}),
+  };
 }
 
-export async function POST(request: Request, context: Params) {
+/**
+ * The second campaign-creation entry point (the first is
+ * POST /api/workflows/[id]/compile, triggered from the workflow editor). This one is for
+ * the campaigns list's "New Campaign" flow, where there's no live editor state to send —
+ * just a saved workflow id — so it loads the already-saved workflow instead of accepting
+ * one in the body. See lib/campaigns/create.ts for the shared compile/validate logic.
+ */
+export async function POST(request: Request) {
   const auth = await requireUser();
   if (!auth.ok) return auth.response;
-  const { id } = await context.params;
 
   try {
-    const workflow = workflowFromBody(await readCallJson(request), id);
+    const input = parseInput(await readCallJson(request));
     const [owned] = await withRLS(auth.user.id, (tx) =>
-      tx.select({ id: workflows.id }).from(workflows).where(eq(workflows.id, id)).limit(1),
+      tx
+        .select({ schema: workflows.schema })
+        .from(workflows)
+        .where(eq(workflows.id, input.workflowId))
+        .limit(1),
     );
     if (!owned) {
       return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
     }
+    const workflow = owned.schema as Workflow;
 
     const campaignId = randomUUID();
     const { compiled, name, contact, draft } = await compileWorkflowForCampaign({
       workflow,
       campaignId,
+      ...(input.name ? { name: input.name } : {}),
     });
     const compiledAt = new Date();
 
     await withRLS(auth.user.id, async (tx) => {
-      const [updated] = await tx
-        .update(workflows)
-        .set({ goal: workflow.goal, schema: workflow, updatedAt: compiledAt })
-        .where(eq(workflows.id, id))
-        .returning({ id: workflows.id });
-      if (!updated) throw new Error("Workflow disappeared while compiling");
-
       await tx.insert(campaigns).values({
         id: campaignId,
         userId: auth.user.id,
-        workflowId: id,
+        workflowId: input.workflowId,
         compiledRequest: compiled,
         name,
         status: "compiled",
@@ -91,7 +102,7 @@ export async function POST(request: Request, context: Params) {
     }
     if (error instanceof CampaignInputError || error instanceof SafeCallInputError) {
       return NextResponse.json(
-        { error: "Workflow could not be compiled", issues: error.issues },
+        { error: "Campaign could not be created", issues: error.issues },
         { status: 400 },
       );
     }
@@ -101,6 +112,6 @@ export async function POST(request: Request, context: Params) {
         { status: error.status === 422 ? 422 : error.status === 503 ? 503 : 502 },
       );
     }
-    return NextResponse.json({ error: "Compiled campaign could not be saved" }, { status: 500 });
+    return NextResponse.json({ error: "Campaign could not be created" }, { status: 500 });
   }
 }

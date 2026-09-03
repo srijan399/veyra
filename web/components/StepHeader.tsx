@@ -4,8 +4,8 @@ import AccountIndicator from "@/components/AccountIndicator";
 const STEPS = [
   { id: "prompt", n: "01", label: "Prompt", href: "/" },
   { id: "workflow", n: "02", label: "Workflow", href: "/workflow" },
-  { id: "campaign", n: "03", label: "Campaign", href: "/campaign" },
-  { id: "results", n: "04", label: "Results", href: null },
+  { id: "campaign", n: "03", label: "Campaign", href: "/campaigns" },
+  { id: "results", n: "04", label: "Results", href: "/results" },
 ] as const;
 
 export type StepId = (typeof STEPS)[number]["id"];
@@ -16,7 +16,7 @@ export type StepId = (typeof STEPS)[number]["id"];
  */
 export type HeaderScreen = StepId | "profile";
 
-/** Sticky pipeline nav. Steps whose screens do not exist yet stay inert. */
+/** Sticky pipeline nav. */
 export default function StepHeader({ current }: { current: HeaderScreen }) {
   const idx = STEPS.findIndex((s) => s.id === current);
 

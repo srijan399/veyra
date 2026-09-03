@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 
 import {
   ContactCsvError,
@@ -9,7 +10,6 @@ import {
 } from '@/lib/campaigns/contact-csv';
 import type {
   CampaignLocale,
-  CallResult,
   CampaignLaunchPreview,
   CampaignStatus,
   Contact,
@@ -43,10 +43,6 @@ function errorMessage(value: unknown): string {
   return issues.length ? `${summary}: ${issues.join('; ')}` : summary;
 }
 
-function terminal(status: CampaignStatus): boolean {
-  return status === 'completed' || status === 'failed';
-}
-
 function localDateTimeValue(value: string | null): string {
   if (!value) return '';
   const date = new Date(value);
@@ -65,7 +61,6 @@ interface CampaignBuilderProps {
   initialCsv: string;
   stepCount: number;
   initialStatus: CampaignStatus;
-  initialResults: CallResult[];
   schedulingEnabled: boolean;
   initialFailureMessage: string | null;
 }
@@ -80,10 +75,10 @@ export default function CampaignBuilder({
   initialCsv,
   stepCount,
   initialStatus,
-  initialResults,
   schedulingEnabled,
   initialFailureMessage,
 }: CampaignBuilderProps) {
+  const router = useRouter();
   const [name, setName] = useState(initialName);
   const [locale, setLocale] = useState<CampaignLocale>(initialLocale);
   const [scheduleLocal, setScheduleLocal] = useState(
@@ -103,10 +98,7 @@ export default function CampaignBuilder({
   const [recipientAuthorized, setRecipientAuthorized] = useState(false);
   const [pending, setPending] = useState<PendingAction>(null);
   const [error, setError] = useState<string | null>(null);
-  const [campaignStatus, setCampaignStatus] = useState(initialStatus);
-  const [results, setResults] = useState(initialResults);
-  const [scheduledAt, setScheduledAt] = useState(initialScheduledAt);
-  const [failureMessage, setFailureMessage] = useState(initialFailureMessage);
+  const campaignStatus = initialStatus;
 
   const locked = campaignStatus !== 'compiled';
 
@@ -116,39 +108,6 @@ export default function CampaignBuilder({
     setRecipientAuthorized(false);
     setError(null);
   };
-
-  const refreshResults = useCallback(async () => {
-    const response = await fetch(`/api/campaigns/${campaignId}/results`, {
-      cache: 'no-store',
-    });
-    const body: unknown = await response.json();
-    if (!response.ok) throw new Error(errorMessage(body));
-    const loaded = body as {
-      status?: CampaignStatus;
-      results?: CallResult[];
-      scheduledAt?: string | null;
-      failureMessage?: string | null;
-    };
-    if (loaded.status) setCampaignStatus(loaded.status);
-    if (Array.isArray(loaded.results)) setResults(loaded.results);
-    if (loaded.scheduledAt !== undefined) setScheduledAt(loaded.scheduledAt);
-    if (loaded.failureMessage !== undefined)
-      setFailureMessage(loaded.failureMessage);
-  }, [campaignId]);
-
-  useEffect(() => {
-    if (
-      campaignStatus !== 'scheduled' &&
-      campaignStatus !== 'launching' &&
-      campaignStatus !== 'launched'
-    ) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      void refreshResults().catch(() => undefined);
-    }, 3_000);
-    return () => window.clearInterval(timer);
-  }, [campaignStatus, refreshResults]);
 
   const editContact = (id: string, patch: Partial<Contact>) => {
     resetApproval();
@@ -286,12 +245,7 @@ export default function CampaignBuilder({
       });
       const body: unknown = await response.json();
       if (!response.ok) throw new Error(errorMessage(body));
-      const launch = body as { status?: CampaignStatus };
-      setCampaignStatus(
-        launch.status ?? (preview.mode === 'fake' ? 'completed' : 'launched'),
-      );
-      setPreview(null);
-      if (launch.status !== 'scheduled') await refreshResults();
+      router.push(`/results/${campaignId}`);
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : 'Campaign launch failed.',
@@ -699,119 +653,13 @@ export default function CampaignBuilder({
           </div>
         ) : null}
 
-        {failureMessage && campaignStatus === 'failed' ? (
+        {initialFailureMessage && campaignStatus === 'failed' ? (
           <div
             role="alert"
             className="mt-5 border border-red-400/50 bg-red-950/30 p-3 text-sm text-red-200"
           >
-            {failureMessage}
+            {initialFailureMessage}
           </div>
-        ) : null}
-
-        {results.length || locked ? (
-          <section className={`mt-10 pt-6 ${RULE}`}>
-            <div className="mb-4 flex items-center justify-between gap-4">
-              <div>
-                <div className={`${KICKER} mb-2`}>
-                  04 · Durable call results
-                </div>
-                <p className="text-[13px] text-bone/55">
-                  {terminal(campaignStatus)
-                    ? 'Every call reached a recorded terminal state.'
-                    : campaignStatus === 'scheduled'
-                      ? `Approved and scheduled for ${scheduledAt ? new Date(scheduledAt).toLocaleString() : 'dispatch'}.`
-                      : 'Waiting for CALL-E terminal webhooks; this view refreshes automatically.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  void refreshResults().catch((caught) =>
-                    setError(caught.message),
-                  )
-                }
-                className="border border-bone/[.26] bg-transparent px-3 py-2 text-xs text-bone/70"
-              >
-                Refresh
-              </button>
-              <a
-                href={`/api/campaigns/${campaignId}/results/export`}
-                className="border border-bone/[.26] bg-transparent px-3 py-2 text-xs text-bone/70 no-underline"
-              >
-                Export CSV
-              </a>
-            </div>
-
-            <div className="space-y-3">
-              {results.map((result) => {
-                const contact = contacts.find(
-                  (item) => item.id === result.contactId,
-                );
-                return (
-                  <details
-                    key={result.id}
-                    className="border border-bone/[.18] bg-panel p-4"
-                  >
-                    <summary className="grid cursor-pointer grid-cols-[1fr_auto_auto] items-center gap-4 text-sm">
-                      <span className="font-extrabold text-bone">
-                        {contact?.name ?? 'Unknown contact'}
-                      </span>
-                      <span className="font-mono text-xs text-bone/50">
-                        {result.status}
-                      </span>
-                      <span
-                        className={
-                          result.qualified === true
-                            ? 'text-emerald-300'
-                            : 'text-bone/45'
-                        }
-                      >
-                        {result.qualified === null
-                          ? '—'
-                          : result.qualified
-                            ? 'Qualified'
-                            : 'Not qualified'}
-                      </span>
-                    </summary>
-                    {result.summary ? (
-                      <p className="mt-4 text-sm leading-6 text-bone/70">
-                        {result.summary}
-                      </p>
-                    ) : null}
-                    {result.failureMessage ? (
-                      <p className="mt-4 text-sm text-red-200">
-                        {result.failureMessage}
-                      </p>
-                    ) : null}
-                    <div className={`${KICKER} mb-2 mt-4`}>
-                      Structured result
-                    </div>
-                    <pre className="overflow-auto bg-ink p-3 text-xs text-bone/65">
-                      {JSON.stringify(result.capturedData, null, 2)}
-                    </pre>
-                    {result.transcript ? (
-                      <>
-                        <div className={`${KICKER} mb-2 mt-4`}>Transcript</div>
-                        <pre className="max-h-72 overflow-auto whitespace-pre-wrap bg-ink p-3 text-xs leading-5 text-bone/65">
-                          {result.transcript}
-                        </pre>
-                      </>
-                    ) : null}
-                    {result.calleCallId ? (
-                      <div className="mt-3 font-mono text-[11px] text-bone/35">
-                        CALL-E {result.calleCallId}
-                      </div>
-                    ) : null}
-                  </details>
-                );
-              })}
-              {!results.length ? (
-                <div className="border border-bone/[.18] p-4 text-sm text-bone/45">
-                  Call records are being reserved.
-                </div>
-              ) : null}
-            </div>
-          </section>
         ) : null}
       </div>
     </main>

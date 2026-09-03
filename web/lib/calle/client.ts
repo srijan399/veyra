@@ -1,12 +1,11 @@
 import type { JsonObject, SafeCallDraft, SafeCallPreview } from "./safety";
-import { isE164, type CallMode } from "./safety";
+import type { CallMode } from "./safety";
 import { CallConfigurationError } from "./client-error";
 import { liveCalleWebhookUrl } from "./webhook-url";
 
 export { CallConfigurationError } from "./client-error";
 
 const OFFICIAL_CALLE_BASE_URL = "https://api.heycall-e.com";
-const MAX_LIVE_WINDOW_MS = 4 * 60 * 60 * 1_000;
 
 export interface SafeCallExecution {
   mode: CallMode;
@@ -23,47 +22,13 @@ export function getCallMode(): CallMode {
   throw new CallConfigurationError('CALL_MODE must be either "fake" or "live"');
 }
 
-function parseLiveTime(name: string): number {
-  const value = process.env[name];
-  const parsed = value ? Date.parse(value) : Number.NaN;
-  if (!value || !Number.isFinite(parsed)) {
-    throw new CallConfigurationError(`${name} must be a valid ISO-8601 timestamp`);
-  }
-  return parsed;
-}
-
-function liveConfig(expectedPhone: string): {
-  apiKey: string;
-  baseUrl: string;
-  windowStart: number;
-  windowEnd: number;
-} {
+function liveConfig(): { apiKey: string; baseUrl: string } {
   if (process.env.CALLE_LIVE_ENABLED !== "true") {
     throw new CallConfigurationError("Live calling is disabled by CALLE_LIVE_ENABLED");
   }
 
   const apiKey = process.env.CALLE_API_KEY;
   if (!apiKey) throw new CallConfigurationError("CALLE_API_KEY is required in live mode");
-
-  const testRecipient = process.env.CALLE_TEST_RECIPIENT_E164;
-  if (!testRecipient || !isE164(testRecipient)) {
-    throw new CallConfigurationError(
-      "CALLE_TEST_RECIPIENT_E164 must be one explicitly authorized E.164 test number",
-    );
-  }
-  if (expectedPhone !== testRecipient) {
-    throw new CallConfigurationError("Live mode only permits the configured test recipient");
-  }
-
-  const start = parseLiveTime("CALLE_LIVE_WINDOW_START");
-  const end = parseLiveTime("CALLE_LIVE_WINDOW_END");
-  const now = Date.now();
-  if (end <= start || end - start > MAX_LIVE_WINDOW_MS) {
-    throw new CallConfigurationError("The live call window must be positive and at most 4 hours");
-  }
-  if (now < start || now > end) {
-    throw new CallConfigurationError("The configured live call window is not currently active");
-  }
 
   const configuredBaseUrl = (process.env.CALLE_BASE_URL ?? OFFICIAL_CALLE_BASE_URL).replace(
     /\/$/,
@@ -73,22 +38,11 @@ function liveConfig(expectedPhone: string): {
     throw new CallConfigurationError("Live credentials may only be sent to the official CALL-E origin");
   }
 
-  return { apiKey, baseUrl: configuredBaseUrl, windowStart: start, windowEnd: end };
-}
-
-export function assertScheduledCallReady(draft: SafeCallDraft, scheduledAt: Date): void {
-  if (getCallMode() !== "live") return;
-  const config = liveConfig(draft.phone);
-  const scheduled = scheduledAt.getTime();
-  if (scheduled < config.windowStart || scheduled > config.windowEnd) {
-    throw new CallConfigurationError(
-      "The scheduled call must fall inside the configured live call window",
-    );
-  }
+  return { apiKey, baseUrl: configuredBaseUrl };
 }
 
 export function assertApprovedCallReady(
-  draft: SafeCallDraft,
+  _draft: SafeCallDraft,
   preview: SafeCallPreview,
 ): void {
   const currentMode = getCallMode();
@@ -96,7 +50,7 @@ export function assertApprovedCallReady(
     throw new CallConfigurationError("CALL_MODE changed after preview; generate a new preview");
   }
   if (currentMode === "live") {
-    liveConfig(draft.phone);
+    liveConfig();
     liveCalleWebhookUrl();
   }
 }
@@ -151,7 +105,7 @@ export async function executeApprovedCall(
     };
   }
 
-  const config = liveConfig(draft.phone);
+  const config = liveConfig();
   // Keep fake mode entirely credential-free and side-effect-free. The official SDK is
   // not loaded until every live gate above has passed.
   const { CalleClient } = await import("@call-e/calle");
