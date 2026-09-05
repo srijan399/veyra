@@ -6,7 +6,7 @@ import StepHeader from "@/components/StepHeader";
 import { campaigns, contacts, workflows } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { getSessionUser } from "@/lib/supabase/auth";
-import type { CampaignStatus, Contact } from "@/types/campaign";
+import { toCampaignLocale, type CampaignStatus, type Contact } from "@/types/campaign";
 import type { Workflow } from "@/types/workflow";
 
 /**
@@ -87,7 +87,7 @@ export default async function CampaignByIdPage({
         campaignId={loaded.id}
         workflowId={loaded.workflowId}
         initialName={loaded.name}
-        initialLocale={loaded.locale === "en-US" ? "en-US" : "en-IN"}
+        initialLocale={toCampaignLocale(loaded.locale)}
         initialScheduledAt={loaded.scheduledAt?.toISOString() ?? null}
         initialContacts={loaded.contacts}
         initialCsv={initialCsv}

@@ -11,7 +11,7 @@ import {
 } from "@/lib/db/call-lifecycle";
 import { campaigns, contacts, workflows } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
-import type { CampaignLocale, Contact } from "@/types/campaign";
+import { toCampaignLocale, type Contact } from "@/types/campaign";
 import type { Workflow } from "@/types/workflow";
 
 export const runtime = "nodejs";
@@ -29,10 +29,6 @@ function sameDigest(left: string, right: string): boolean {
   const a = Buffer.from(left, "hex");
   const b = Buffer.from(right, "hex");
   return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function campaignLocale(value: string): CampaignLocale {
-  return value === "en-US" ? "en-US" : "en-IN";
 }
 
 export async function GET(request: Request) {
@@ -105,7 +101,7 @@ export async function GET(request: Request) {
         workflow: loaded.workflow,
         contacts: loaded.contacts,
         mode,
-        locale: campaignLocale(loaded.locale),
+        locale: toCampaignLocale(loaded.locale),
         scheduledAt: loaded.scheduledAt?.toISOString() ?? null,
       });
       if (!sameDigest(item.approvalDigest, prepared.preview.approvalDigest)) {

@@ -13,13 +13,26 @@ export interface Contact {
   metadata?: Record<string, string>;
 }
 
-export const CAMPAIGN_LOCALES = ["en-IN", "en-US"] as const;
+export const CAMPAIGN_LOCALES = ["en-IN", "en-US", "hi-IN"] as const;
 export type CampaignLocale = (typeof CAMPAIGN_LOCALES)[number];
 
 export const CAMPAIGN_LOCALE_LABELS: Record<CampaignLocale, string> = {
   "en-IN": "Indian English",
   "en-US": "US English",
+  "hi-IN": "Hinglish (Hindi + English)",
 };
+
+/**
+ * Narrows a raw DB string to a known CampaignLocale, defaulting to "en-IN" for
+ * anything unrecognized (a locale added after a row was written, or bad data).
+ * Centralizing this avoids the "value === 'en-US' ? 'en-US' : 'en-IN'" ternary that
+ * used to be duplicated at every read site and would have silently dropped hi-IN.
+ */
+export function toCampaignLocale(value: string): CampaignLocale {
+  return (CAMPAIGN_LOCALES as readonly string[]).includes(value)
+    ? (value as CampaignLocale)
+    : "en-IN";
+}
 
 /**
  * The flattened Calls API request produced by lib/compiler.ts. One is built per

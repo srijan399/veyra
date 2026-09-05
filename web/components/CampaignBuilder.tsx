@@ -326,10 +326,12 @@ export default function CampaignBuilder({
               >
                 <option value="en-IN">Indian English (en-IN)</option>
                 <option value="en-US">US English (en-US)</option>
+                <option value="hi-IN">Hinglish (hi-IN)</option>
               </select>
               <span className="mt-2 block leading-5 text-bone/40">
-                Sent to CALL-E as the conversation locale. Indian English is the
-                default.
+                {locale === "hi-IN"
+                  ? 'Conducts the call in Hinglish (Hindi + English, Roman script) instead of English.'
+                  : 'Sent to CALL-E as the conversation locale. Indian English is the default.'}
               </span>
             </label>
             <label className="text-xs text-bone/55">

@@ -10,7 +10,7 @@
  */
 
 import type { Workflow } from "@/types/workflow";
-import type { CalleCallRequest, Contact } from "@/types/campaign";
+import type { CalleCallRequest, CampaignLocale, Contact } from "@/types/campaign";
 
 const ENGINE_URL = process.env.ENGINE_URL ?? "http://localhost:8008";
 const ENGINE_SHARED_SECRET = process.env.ENGINE_SHARED_SECRET;
@@ -83,11 +83,14 @@ export function compileWorkflow(params: {
   campaignId: string;
   contact: Contact;
   webhookUrl: string;
+  /** Steers the task's language/register — see engine/app/compiler.py. Defaults to en-IN. */
+  locale?: CampaignLocale;
 }): Promise<CalleCallRequest> {
   return post<CalleCallRequest>("/workflows/compile", {
     workflow: params.workflow,
     campaign_id: params.campaignId,
     contact: params.contact,
     webhook_url: params.webhookUrl,
+    ...(params.locale ? { locale: params.locale } : {}),
   });
 }

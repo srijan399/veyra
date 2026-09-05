@@ -13,7 +13,7 @@ import { callResults, campaigns, contacts, workflows } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { compileWorkflow, EngineError } from "@/lib/engine-client";
 import { requireUser } from "@/lib/supabase/auth";
-import type { Contact } from "@/types/campaign";
+import { toCampaignLocale, type Contact } from "@/types/campaign";
 import type { Workflow } from "@/types/workflow";
 
 export const runtime = "nodejs";
@@ -77,18 +77,15 @@ export async function POST(request: Request, context: Params) {
     }
 
     const contact: Contact = { id: loaded.contactId, ...input.contact };
+    const locale = toCampaignLocale(loaded.locale);
     const compiled = await compileWorkflow({
       workflow: loaded.workflow,
       campaignId: id,
       contact,
       webhookUrl: calleWebhookUrl(),
+      locale,
     });
-    const draft = createSafeDraftFromCompiled(
-      compiled,
-      input.name,
-      contact,
-      loaded.locale === "en-US" ? "en-US" : "en-IN",
-    );
+    const draft = createSafeDraftFromCompiled(compiled, input.name, contact, locale);
     const compiledAt = new Date();
 
     await withRLS(auth.user.id, async (tx) => {

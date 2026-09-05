@@ -10,7 +10,7 @@ import { campaigns, contacts, workflows } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { EngineError } from "@/lib/engine-client";
 import { requireUser } from "@/lib/supabase/auth";
-import type { CampaignLocale } from "@/types/campaign";
+import { toCampaignLocale } from "@/types/campaign";
 import type { Workflow } from "@/types/workflow";
 
 export const runtime = "nodejs";
@@ -91,7 +91,7 @@ export async function POST(_request: Request, context: Params) {
         compiledRequest: compiled,
         name,
         status: "compiled",
-        locale: (loaded.locale === "en-US" ? "en-US" : "en-IN") satisfies CampaignLocale,
+        locale: toCampaignLocale(loaded.locale),
       });
       await tx.insert(contacts).values(
         loaded.contacts.map((contact, index) => ({

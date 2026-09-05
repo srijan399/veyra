@@ -24,6 +24,7 @@ export async function compileAndPrepareCampaign(params: {
         campaignId: params.campaignId,
         contact,
         webhookUrl: calleWebhookUrl(),
+        locale: params.locale,
       }),
     ),
   );

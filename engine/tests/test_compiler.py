@@ -151,3 +151,40 @@ def test_escape_hatch_is_not_duplicated():
         "book_advisor",
         ESCAPE_HATCH,
     ]
+
+
+def test_default_locale_is_indian_english_register_not_hinglish():
+    """No locale argument, and locale="en-IN" explicitly, must both stay in English —
+    only vocabulary/register changes, never the spoken language."""
+    request = compile_workflow(
+        SAMPLE_WORKFLOW, "campaign-1", _contact(), "https://example.com/api/calle/webhook"
+    )
+    assert "Indian English" in request.task
+    assert "Hinglish" not in request.task
+
+
+def test_hi_in_locale_switches_to_hinglish():
+    request = compile_workflow(
+        SAMPLE_WORKFLOW,
+        "campaign-1",
+        _contact(),
+        "https://example.com/api/calle/webhook",
+        locale="hi-IN",
+    )
+    assert "Hinglish" in request.task
+    # Roman script instruction, not the Devanagari script itself.
+    assert "Devanagari" in request.task
+    assert "Indian English" not in request.task
+
+
+def test_en_us_locale_has_no_language_instruction():
+    request = compile_workflow(
+        SAMPLE_WORKFLOW,
+        "campaign-1",
+        _contact(),
+        "https://example.com/api/calle/webhook",
+        locale="en-US",
+    )
+    assert "Language:" not in request.task
+    assert "Hinglish" not in request.task
+    assert "Indian English" not in request.task

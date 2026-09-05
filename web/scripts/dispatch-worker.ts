@@ -19,7 +19,7 @@ config({ path: ".env.local", quiet: true });
 import { createServer } from "node:http";
 import amqp, { type ChannelModel } from "amqplib";
 
-import { processCallDispatchJob, type CallDispatchJob } from "@/lib/campaigns/dispatch";
+import { isCallDispatchJob, processCallDispatchJob } from "@/lib/campaigns/dispatch";
 import { CALL_DISPATCH_QUEUE } from "@/lib/queue/rabbitmq";
 
 const PREFETCH = 5;
@@ -69,12 +69,16 @@ async function runOnce(): Promise<void> {
     if (!msg) return;
     void (async () => {
       try {
-        const job = JSON.parse(msg.content.toString("utf8")) as CallDispatchJob;
-        await processCallDispatchJob(job);
+        const parsed: unknown = JSON.parse(msg.content.toString("utf8"));
+        if (!isCallDispatchJob(parsed)) {
+          console.error("[dispatch-worker] discarding malformed message (not a CallDispatchJob):", parsed);
+        } else {
+          await processCallDispatchJob(parsed);
+        }
       } catch (error) {
         // processCallDispatchJob already records failures it can attribute to a call
-        // (recordSubmissionFailure); this only catches a malformed message itself, which
-        // has no call to attribute the failure to. Acked either way — see below.
+        // (recordSubmissionFailure); this only catches unparseable JSON, which has no
+        // call to attribute the failure to. Acked either way — see below.
         console.error("[dispatch-worker] failed to process message", error);
       } finally {
         // Always ack: recordSubmissionFailure already turned a failed call into a

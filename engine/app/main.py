@@ -53,6 +53,7 @@ class CompileRequest(BaseModel):
     campaign_id: str
     contact: Contact
     webhook_url: str
+    locale: str = "en-IN"
 
 
 class WorkflowWithChecks(BaseModel):
@@ -139,6 +140,8 @@ def compile_endpoint(request: CompileRequest) -> CalleCallRequest:
             },
         )
     try:
-        return compile_workflow(workflow, request.campaign_id, request.contact, request.webhook_url)
+        return compile_workflow(
+            workflow, request.campaign_id, request.contact, request.webhook_url, request.locale
+        )
     except CalleSchemaError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

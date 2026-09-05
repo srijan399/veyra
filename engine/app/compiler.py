@@ -24,14 +24,45 @@ _OPERATOR_PHRASE = {
     "in": "is one of",
 }
 
+# CALL-E's Calls API takes a BCP-47 recipient.locale as a TTS voice *hint*, not a
+# selectable voice id — there is no separate accent/voice parameter (see
+# TECHNICAL_ARCH.md section 8.2.1). The one lever this module actually controls is the
+# task text itself, so an "en-IN" call and an "en-US" call were, until now, word-for-
+# word identical apart from the locale tag sent to CALL-E. These per-locale sections
+# are the closest available approximation of a locale-appropriate call: en-US gets no
+# addition (unchanged baseline), en-IN nudges vocabulary/register without changing the
+# language, and hi-IN switches the actual spoken language to Hinglish — which is a
+# stronger, more reliable way to sound distinctly Indian, since it likely engages a
+# genuinely different underlying voice model rather than relying on a same-language
+# accent hint.
+_LOCALE_LANGUAGE_INSTRUCTIONS: dict[str, str] = {
+    "hi-IN": (
+        "Language: Conduct this entire call in Hinglish — natural, conversational Hindi "
+        'mixed with English, exactly as commonly spoken in Indian daily conversation. '
+        'Write and speak Hindi words in Roman/Latin script (for example "kya aap abhi '
+        'baat kar sakte hain?", "haan", "theek hai", "shukriya"), never Devanagari. Keep '
+        "proper nouns, dates, times, numbers, and any technical or schema-specific terms "
+        "in English. Do not speak in pure English or pure Hindi — maintain a natural, "
+        "casual-but-professional Hinglish flow throughout."
+    ),
+    "en-IN": (
+        "Language: Speak in natural Indian English — the conversational register "
+        'commonly used in Indian professional and customer-service calls (for example '
+        '"kindly", "please share", "I will revert shortly", formal address such as "sir" '
+        'or "ma\'am" where it fits naturally). Keep the entire conversation in English; '
+        "do not switch to Hindi or mix in other languages."
+    ),
+}
+
 
 def compile_workflow(
     workflow: Workflow,
     campaign_id: str,
     contact: Contact,
     webhook_url: str,
+    locale: str = "en-IN",
 ) -> CalleCallRequest:
-    task = _render_task(workflow, contact)
+    task = _render_task(workflow, contact, locale)
     result_schema = _render_result_schema(workflow.outcome_schema)
     assert_calle_schema_subset(result_schema)
 
@@ -79,7 +110,7 @@ def _ordered_nodes(workflow: Workflow) -> list[WorkflowNode]:
     return [node_by_id[nid] for nid in ordered]
 
 
-def _render_task(workflow: Workflow, contact: Contact) -> str:
+def _render_task(workflow: Workflow, contact: Contact, locale: str) -> str:
     node_by_id = {n.id: n for n in workflow.nodes}
     sections: list[str] = []
 
@@ -100,6 +131,10 @@ def _render_task(workflow: Workflow, contact: Contact) -> str:
         "meaning explicit and unambiguous. This conversational freedom never overrides "
         "the safety rules, branch logic, capture requirements, or result requirements."
     )
+
+    language_instruction = _LOCALE_LANGUAGE_INSTRUCTIONS.get(locale)
+    if language_instruction:
+        sections.append(language_instruction)
 
     contact_data = {"name": contact.name, "metadata": contact.metadata or {}}
     sections.append(

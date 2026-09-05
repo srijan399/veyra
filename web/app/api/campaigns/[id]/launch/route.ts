@@ -21,7 +21,7 @@ import { campaigns, contacts, workflows } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { EngineError } from "@/lib/engine-client";
 import { requireUser } from "@/lib/supabase/auth";
-import type { Contact } from "@/types/campaign";
+import { toCampaignLocale, type Contact } from "@/types/campaign";
 import type { Workflow } from "@/types/workflow";
 
 export const runtime = "nodejs";
@@ -100,7 +100,7 @@ export async function POST(request: Request, context: Params) {
       workflow: loaded.workflow,
       contacts: loaded.contacts,
       mode,
-      locale: loaded.locale === "en-US" ? "en-US" : "en-IN",
+      locale: toCampaignLocale(loaded.locale),
       scheduledAt: loaded.scheduledAt?.toISOString() ?? null,
     });
     if (!sameDigest(approval.approvalDigest, prepared.preview.approvalDigest)) {

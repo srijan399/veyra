@@ -14,6 +14,31 @@ export interface CallDispatchJob {
   call: PreparedCampaignCall;
 }
 
+/**
+ * Guards processCallDispatchJob against a message that isn't actually a CallDispatchJob
+ * (a stray test publish, a future producer sending an incompatible shape, corrupted
+ * JSON that still parses). Without this, `job.call` being undefined makes both the
+ * execution attempt *and* the catch block's own error-reporting throw — a confusing
+ * double-fault — since the catch block also reads `call.callResultId` to report what
+ * failed. Reject cleanly here instead, before any of that runs.
+ */
+export function isCallDispatchJob(value: unknown): value is CallDispatchJob {
+  if (typeof value !== "object" || value === null) return false;
+  const job = value as Record<string, unknown>;
+  if (typeof job.campaignId !== "string") return false;
+  if (typeof job.call !== "object" || job.call === null) return false;
+  const call = job.call as Record<string, unknown>;
+  return (
+    typeof call.callResultId === "string" &&
+    typeof call.draft === "object" &&
+    call.draft !== null &&
+    typeof call.preview === "object" &&
+    call.preview !== null &&
+    typeof call.contact === "object" &&
+    call.contact !== null
+  );
+}
+
 export async function dispatchPreparedCampaign(params: {
   userId: string;
   campaignId: string;
