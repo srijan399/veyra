@@ -11,7 +11,7 @@
 Describe an outbound calling process in plain English and voila, Veyra turns it into an editable, reusable phone workflow, and CALL-E executes it through real conversations.
 
 Link to our PR: [PR](#) <br/>
-Link to webapp: [Website](https://veyra-sooty.vercel.app)
+Link to webapp: [Website](https://veyra-workflow.vercel.app)
 
 **Check out:** <br />
 [Youtube Demo](#) · [Architecture walkthrough](#) · [Github](https://github.com/srijan399/veyra) · [Devpost submission](#)
