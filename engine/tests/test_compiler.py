@@ -131,9 +131,7 @@ def test_every_enum_offers_an_escape_hatch():
         SAMPLE_WORKFLOW, "campaign-1", _contact(), "https://example.com/api/calle/webhook"
     )
     enums = [
-        field["enum"]
-        for field in request.result_schema["properties"].values()
-        if "enum" in field
+        field["enum"] for field in request.result_schema["properties"].values() if "enum" in field
     ]
     assert enums, "sample workflow should exercise at least one enum field"
     for values in enums:
