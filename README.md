@@ -1,76 +1,213 @@
+<div align="center" style="text-align: center;">
+  <img
+    src="https://hackmd.io/_uploads/HyTZ9-OdMx.png"
+    alt="Veyra logo"
+    width="250"
+  />
+</div>
+
 # Veyra
 
-### Workflow Engine for CALL-E Voice Agent Swarms
+Describe an outbound calling process in plain English and voila, Veyra turns it into an editable, reusable phone workflow, and CALL-E executes it through real conversations.
 
----
+Link to our PR: [PR](#) <br/>
+Link to webapp: [Website](https://veyra-sooty.vercel.app)
 
-## Elevator Pitch
+**Check out:** <br />
+[Youtube Demo](#) · [Architecture walkthrough](#) · [Github](https://github.com/srijan399/veyra) · [Devpost submission](#)
 
-You describe the outbound calling process you want and Veyra turns it into an executable phone workflow, complete with conversation logic, qualification rules, and structured outcomes, then CALL-E's voice agents run it at scale on real calls.
-
-## Positioning Statement
-
-"We help businesses turn any outbound calling process into an executable AI workflow. Describe what the agent needs to accomplish, our platform generates the conversation flow, qualification logic and structured outputs, and CALL-E handles the actual calls."
-
-What could be an alternate framing for a developer customer base:
-"A development and orchestration layer for building production phone-call workflows with CALL-E."
+**Built with:** CALL-E · Next.js 16 · TypeScript · FastAPI · Gemini · Supabase · RabbitMQ · Drizzle ORM · Tailwind CSS · React 19
 
 ## The Problem
 
-Businesses that rely on high-volume, repetitive outbound calling (sales qualification, appointment confirmation, renewal reminders, student counseling signups) either hire large calling teams to run scripts manually, or need engineers to hand build voice agent logic for every new campaign. Both are slow and do not scale well:
+Businesses that rely on high-volume, repetitive outbound calling such as **sales qualification**, **appointment confirmation**, **renewal reminders** must either hire large teams to run scripts manually or ask engineers to build voice-agent logic for every campaign.
 
-- Manual call teams are expensive, inconsistent, and hard to scale up or down quickly.
-- Hand built voice agents require an AI engineer to translate a business process into prompts, conversation states, and branching logic, then rebuild it every time the process changes.
+Both are **slow** and **do not scale well**:
 
-There is no fast path from "here is the business process in plain English" to "here is a working, structured, production ready voice agent."
+- Manual call teams are **expensive**, **inconsistent**, and **difficult** to **scale** quickly.
+- Hand-built voice agents **require an AI engineer** to translate each process into prompts, conversation states, and branching logic and repeat that work whenever it changes.
 
-## The Solution
+There is no direct path from **_“here is our calling process”_** to a **working, structured, production-ready voice agent.**
 
-Veyra is a workflow generation and orchestration layer on top of CALL-E. A business user describes their desired call process in natural language. The platform generates a structured, editable conversation workflow (nodes, branching logic, qualification scoring, data capture) and compiles it into a Calls API task and result schema. A developer can then refine the generated workflow, connect it to a contact list or CRM, and launch it as a live campaign that CALL-E executes over real phone calls, returning structured, usable results.
+## Our Proposed Solution
 
-The workflow graph is Veyra's own authoring and editing abstraction. CALL-E does not execute an external branching graph, it runs one adaptive conversation from a single task instruction and extracts structured data at the end of the call, so the graph is flattened at compile time into a natural-language task plus a result schema.
+Veyra is a **workflow generation** **and orchestration** layer built on CALL-E which forms the crux of the system.
 
-## Implementation Status
+A business user describes a calling process in natural language.
 
-The repository is being delivered in phases. **Phases 1 through 4 are implemented.** Phase 1
-provides an authenticated, one-contact CALL-E execution boundary with strict E.164
-validation, an exact masked preview, explicit approval, a content-bound idempotency key,
-a fake-by-default adapter, and guarded live mode. Phase 2 connects the editable workflow
-to the Python compiler, persists the compiled campaign and first contact under Supabase
-RLS, reloads that campaign, and recompiles contact edits before every preview. The
-credential-free `pnpm demo` places zero real calls. Phase 3 persists and compiles up to ten
-contacts, binds one approval to the exact personalized batch, reserves durable call runs,
-submits every run once without automatic retries, processes deduplicated terminal CALL-E
-webhooks, and displays structured results and transcripts. See `web/README.md` for the
-runbook. Phase 4 adds approval-bound Indian English (`en-IN`) and US English locale setup,
-optional durable scheduling through a secured server dispatcher, authenticated CSV result
-export, a web-to-engine health endpoint, and a Render Blueprint. Precise Vercel scheduling
-requires a plan that supports frequent Cron Jobs; immediate launch remains the default.
+**Veyra** generates a **structured, editable and re-usable** conversation workflow with _nodes, branches, qualification logic, and data capture_, then compiles it into a CALL-E **Calls API task and result schema**.
 
-The repository now contains the complete deployable path. A real authorized call and the
-public demo recording are operational submission proof and cannot be produced by a
-credential-free repository test.
+A developer or non-technical operator can **refine the workflow**, add contacts manually or drop in a CSV, **approve the exact campaign**, and launch it through CALL-E. Completed calls return structured outcomes and transcripts to Veyra's results dashboard.
 
-## System Architecture
+Past campaigns can be cloned into new drafts, allowing teams to reuse the same workflow and contacts while requiring a fresh preview and approval.
+
+CALL-E does not execute an external branching graph so Veyra flattens the graph at compile time into a natural-language task and result schema.
+
+The **workflow graph** is Veyra's own **authoring and editing abstraction**.
+
+### The ideal customer profile
+
+Industry agnostic sales and operations teams that run repetitive outbound campaigns and need structured, actionable outcomes from every conversation.
+
+## Setup
+
+Veyra consists of a **Next.js web application**, **a stateless FastAPI workflow engine**, **Supabase**, **RabbitMQ**, and a long-running call-dispatch worker. The worker is required for both fake and live campaigns - without it, calls remain queued.
+
+### Prerequisites
+
+- Node.js 20.9 or newer, with Corepack enabled
+- Python 3.11 or newer
+- A Supabase project
+- A Gemini API key for workflow generation and natural-language editing
+- A local or hosted RabbitMQ broker
+- Optional: CALL-E credentials, required only when placing a real call
+
+### 1. Configure the workflow engine
+
+```bash
+cd engine
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+Set `GEMINI_API_KEY` in `engine/.env`. `GEMINI_MODEL` can normally keep its default.
+
+To protect a deployed engine, set `ENGINE_SHARED_SECRET` to a random value and use the same value in the web application's environment.
+
+Start the engine:
+
+```bash
+make run
+```
+
+It runs at `http://localhost:8008`; `GET /health` should return `{"status":"ok"}`.
+
+Run `.venv/bin/python -m pytest -p no:cacheprovider` for the engine test suite.
+
+### 2. Configure Supabase and the web application
+
+In Supabase, turn off **Authentication > Providers > Email > Confirm email** so a new account receives a session immediately.
+
+Then configure the web application:
+
+```bash
+cd web
+corepack enable
+corepack prepare pnpm@11.23.0 --activate
+pnpm install
+cp .env.example .env.local
+```
+
+Fill in these required values in `web/.env.local`:
+
+```env
+ENGINE_URL=http://localhost:8008
+ENGINE_SHARED_SECRET=
+APP_URL=http://localhost:3000
+
+DATABASE_URL=<Supabase transaction-pooler URI for the postgres role>
+NEXT_PUBLIC_SUPABASE_URL=<Supabase project URL>
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<Supabase publishable key>
+
+RABBIT_MQ_URL=<RabbitMQ AMQP connection URL>
+
+CALL_MODE=fake
+CALLE_LIVE_ENABLED=false
+CAMPAIGN_SCHEDULING_ENABLED=false
+```
+
+If the engine has an `ENGINE_SHARED_SECRET`, place the same value here. Apply every database migration before starting the app:
+
+```bash
+pnpm db:migrate
+pnpm dev
+```
+
+The web app is available at `http://localhost:3000`, and `GET /api/health` checks that it can reach the engine.
+
+### 3. Start the dispatch worker
+
+Open a third terminal and run:
+
+```bash
+cd web
+pnpm worker
+```
+
+The worker consumes `veyra.call-dispatch` jobs from RabbitMQ and performs fake or live CALL-E submissions outside the web request. Keep it running while testing campaign launches.
+
+### 4. Test safely in fake mode
+
+Keep `CALL_MODE=fake` and `CALLE_LIVE_ENABLED=false`.
+
+Create an account, generate and edit a workflow, compile a campaign, add contacts manually or from a CSV containing `Name` and `Phone` columns, preview the campaign, approve it, and launch it.
+
+The worker will produce simulated results without contacting CALL-E or consuming call credits.
+
+You can also verify the execution boundary without credentials:
+
+```bash
+cd web
+pnpm demo
+pnpm lint
+pnpm test
+pnpm build
+```
+
+### 5. Enable live calls only when ready
+
+Set the following server-side values on the web deployment and on the dispatch worker:
+
+```env
+CALL_MODE=live
+CALLE_LIVE_ENABLED=true
+CALLE_API_KEY=<CALL-E API key>
+CALLE_BASE_URL=https://api.heycall-e.com
+APP_URL=https://<public-web-app-domain>
+CALLE_WEBHOOK_TOKEN=<at-least-32-random-characters>
+```
+
+`APP_URL` is the public frontend URL because CALL-E posts results to `<APP_URL>/api/calle/webhook`.
+
+Preview the exact campaign and confirm recipient permission before launching. Veyra does not automatically retry an uncertain submission.
+
+**Scheduled campaigns** additionally require `CAMPAIGN_SCHEDULING_ENABLED=true`, a `CRON_SECRET` of at least 16 characters, and a frequent scheduler calling `GET /api/cron/campaigns`.
+
+**For deployment**, the root `render.yaml` provisions the Python engine.
+
+Deploy the Next.js application separately on Vercel. The RabbitMQ consumer must run as a separate, long-running worker process because it cannot live inside a request-scoped Vercel function.
+
+## Our System Architecture in full flow
 
 ```mermaid
 flowchart TD
-A["User<br/>(natural-language prompt)"] --> B["Workflow Generator<br/>goal, info needed, flow, logic, schema"]
-B --> C["Generated Workflow<br/>(editable graph)"]
-C --> D["Campaign Builder<br/>workflow + contacts + schedule"]
-D --> E["Compiler<br/>flatten graph to Calls API task + result schema"]
-E --> F["Calls API Request<br/>one per contact, personalized task"]
-F --> G["Real phone calls"]
-G --> H["Adaptive Agent<br/>one conversation from the task instruction"]
-H --> I["Structured Results<br/>webhook to Supabase, CRM/webhook out"]
+    U["User<br/>natural-language prompt"] --> W["Next.js application"]
+    W --> A["Supabase Auth"]
+    W --> E["FastAPI workflow engine"]
+    E --> G["Gemini<br/>generate and edit <br />workflow"]
+    G --> E
+    E --> W
+    W --> D["Supabase Postgres<br/>workflows, campaigns, <br /> results"]
+    W --> Q["RabbitMQ<br/>one durable job per call"]
+    Q --> K["Dispatch worker"]
+    K --> C["CALL-E Calls API"]
+    C --> P["Real phone conversation"]
+    C --> H["Authenticated result <br />webhook"]
+    H --> D
+    D --> R["Results dashboard and <br />CSV export"]
 ```
 
-## Example Generated Workflow (Wealth Management Lead Qualification)
+## Example Generated Workflow
 
-Prompt given to the platform:
-"Call people who requested information about our wealth management services, understand their financial goals, risk tolerance and investment horizon, answer basic questions, qualify them, and book an advisor consultation for qualified leads."
+The following wealth-management example shows the full transformation from business intent to a structured CALL-E request.
 
-Generated flow:
+### Initial Prompt
+
+Call people who requested information about our **wealth management services**, understand **their financial goals**, **risk tolerance** and **investment horizon**, answer basic questions, qualify them, and **book an advisor consultation for qualified leads**.
+
+Veyra turns that request into an editable workflow such as:
 
 ```mermaid
 flowchart TD
@@ -89,7 +226,7 @@ flowchart TD
     K --> Z2[END]
 ```
 
-Generated workflow summary shown to the user:
+The user can review the purpose of every generated node if you didn't follow the chart:
 
 | Node               | Purpose                          |
 | ------------------ | -------------------------------- |
@@ -108,30 +245,65 @@ Generated workflow summary shown to the user:
 
 The graph above is not sent to CALL-E. At compile time it is flattened into a single Calls API request, one per contact:
 
-```jsonc
-{
-  "task": "You are Ava calling on behalf of Northbridge Wealth. Introduce yourself as an AI assistant and reference the wealth management information Marta Reyes requested. Ask permission to continue; if they decline, offer to send information by email and end politely. If they agree, ask about their financial goal (retirement, wealth growth, tax planning, education, other), then their investment horizon, then their risk tolerance. Answer basic questions about the service, but never give financial advice. If they qualify, offer to book an advisor consultation. If they are not ready, offer to send information.",
-  "result_schema": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["qualified", "primary_goal"],
-    "properties": {
-      "qualified": { "type": "boolean", "description": "Met the advisor threshold" },
-      "primary_goal": { "type": "string", "enum": ["retirement", "wealth_growth", "tax_planning", "education", "other"] },
-      "horizon_years": { "type": "number" },
-      "risk_profile": { "type": "string", "enum": ["cautious", "balanced", "growth"] },
-      "slot_booked": { "type": "boolean" },
-      "next_step": { "type": "string", "enum": ["book_advisor", "send_info", "retry", "do_not_contact"] }
-    }
-  },
-  "metadata": { "campaignId": "c_2f91", "contactId": "ct_88a3" },
-  "webhook_url": "https://veyra.app/api/calle/webhook"
-}
+```yaml
+task:
+  You are Ava calling on behalf of Northbridge Wealth. Introduce yourself as an AI
+  assistant and reference the wealth management information Marta Reyes requested.
+  Ask permission to continue. If they decline, offer to send information by email and
+  end politely. If they agree, ask about their financial goal—retirement, wealth growth,
+  tax planning, education, or another goal—followed by their investment horizon and
+  risk tolerance. Answer basic questions about the service, but never give financial
+  advice. If they qualify, offer to book an advisor consultation. If they are not ready,
+  offer to send information.
+
+result_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    qualified:
+      type: boolean
+      description: Met the advisor threshold
+
+    primary_goal:
+      type: string
+      enum:
+        - retirement
+        - wealth_growth
+        - tax_planning
+        - education
+        - other
+
+    horizon_years:
+      type: number
+
+    risk_profile:
+      type: string
+      enum:
+        - cautious
+        - balanced
+        - growth
+
+    slot_booked:
+      type: boolean
+
+    next_step:
+      type: string
+      enum:
+        - book_advisor
+        - send_info
+        - retry
+        - do_not_contact
+
+metadata:
+  campaignId: c_2f91
+  contactId: ct_88a3
+
+webhook_url: https://veyra.app/api/calle/webhook
 ```
 
-Sent with header `Idempotency-Key: veyra_c_2f91_ct_88a3`, so a retry after a timeout can never place a second real phone call.
+The dispatch worker sends it with `Idempotency-Key: veyra_c_2f91_ct_88a3` to prevent double calling.
 
-The key product moment: a developer can then say "add a question about approximate investable assets after risk tolerance," and the platform updates the workflow accordingly, without hand editing prompts or state machines. This is the strongest demonstration of the platform being a real devtool rather than a wrapper.
+A developer can then ask Veyra to “add a question about approximate investable assets after risk tolerance,” and the platform updates the graph without requiring manual prompt or state-machine editing.
 
 ## Two Users, One Platform
 
@@ -140,44 +312,80 @@ flowchart TD
     P[PLATFORM] --> BU[Business User]
     P --> DEV[Developer]
 
-    BU --> BU1["Create a campaign"]
-    DEV --> DEV1["Configure workflow, branching,<br/>schemas, integrations, CALL-E<br/>credentials, webhooks, CRM connections"]
+    BU --> BU1["Describe, review, and <br />launch a campaign"]
+    DEV --> DEV1["Refine workflow logic,<br/>schemas, credentials, <br /> and deployment"]
 
     BU1 --> WG[Workflow Generator]
     DEV1 --> WG
 
-    WG --> CO["Compiler<br/>Calls API task + result schema"]
-    CO --> CE["CALL-E Calls API"]
-    CE --> RC[Real phone calls]
+    WG --> CO["Compiler<br/>Calls API task + <br />result schema"]
+    CO --> Q["RabbitMQ"]
+    Q --> WK["Dispatch worker"]
+    WK --> CE["CALL-E Calls API"]
+    CE --> RC["Real phone conversations"]
 ```
 
-- **Business user**: describes intent in plain language ("qualify people interested in retirement planning"), reviews and approves the generated workflow, launches campaigns, reviews results.
-- **Developer / ops engineer**: refines the generated workflow, wires up integrations (CRM, webhooks, contact lists), manages CALL-E credentials, and owns the technical reliability of live campaigns.
+- **Business user**
+  describes intent in plain language, reviews and approves the generated workflow, launches campaigns, and reviews results.
+- **Developer**
+  refines workflow logic, schemas, call settings, and deployment while
+  owning the reliability of live campaigns.
 
-This dual audience is important because CALL-E is positioned as a developer-first platform. Veyra extends that developer story upward to non-technical business users while keeping full control available to developers underneath.
+CALL-E remains the **developer-first execution layer**, while Veyra makes the **authoring and campaign experience accessible to non-technical operators**.
 
 ## Target Customers
 
-The ideal customer profile: sales and operations teams at businesses that run repetitive outbound phone campaigns and need structured outcomes from each conversation.
-
 ### Priority Segments
 
-**1. Sales and lead generation teams (strongest initial market)**
-Wealth management firms, insurance companies, real estate companies, education institutes, automotive dealerships, SaaS companies, B2B service companies. Workflow: lead list, call, qualify, answer questions, book meeting, push to CRM.
+**1. Sales and lead generation teams (Veyra's strongest initial market)**
+
+- Wealth management firms
+- Insurance companies
+- Real estate companies
+- Education institutes
+- Automotive dealerships
+- SaaS companies
+- B2B service companies.
+
+Typical workflow: import a lead list, call, qualify, answer questions, book a meeting, and export structured results.
 
 **2. Customer operations and call centers**
-Internal teams handling appointment confirmations, onboarding, feedback collection, renewal reminders, document collection, service follow ups, verification. Today this is manager writes script, employees follow script, data entered manually. Veyra replaces this with manager describes process, workflow generated, AI makes calls, structured results flow to CRM. Strong, easy to explain ROI story.
+
+Internal teams handling:
+
+- appointment confirmations
+- onboarding
+- feedback collection
+- renewal reminders
+- document collection
+- service follow-ups
+- verification
+
+Today, a manager writes a script, employees follow it, and results are entered manually. With Veyra, the manager describes the process, a workflow is generated, CALL-E makes the calls, and structured results appear in the dashboard.
 
 **3. Agencies, BPOs, and outsourced call centers**
-An agency running campaigns for many clients today needs a separate script or process per client. With Veyra, each client gets their own generated workflow and campaign without engineering a new voice agent each time. This makes the platform infrastructure for voice-call agencies, a strong recurring revenue customer type.
+
+An agency running campaigns for many clients today needs a separate script or process for each client.
+
+With Veyra, each client gets a reusable workflow and campaign without engineering a new voice agent each time. This makes the platform useful infrastructure for voice-call agencies.
 
 **4. Financial services**
-Wealth managers, insurance companies, loan providers, financial advisory firms, fintech companies. Use cases: lead qualification, insurance requirement collection, loan pre-qualification. Important boundary: the platform should stay in qualification, information collection, FAQs, and appointment booking, and should not give actual financial advice.
+
+- Wealth managers
+- Insurance companies
+- Loan providers
+- Financial advisory firms
+- Fintech companies.
+
+Use cases include lead qualification, insurance requirement collection, and loan pre-qualification.
+
+The platform should remain within qualification, information collection, FAQs, and appointment booking and it should not provide financial advice.
 
 **5. Automotive**
-Dealerships using it for test drive booking, service reminders, lead qualification, vehicle availability inquiries, and finance/insurance lead qualification.
 
-### Segment Priority Table
+Dealerships can use Veyra for test-drive bookings, service reminders, lead qualification, vehicle-availability enquiries, and finance or insurance qualification.
+
+### Segment Priority
 
 | Customer            | Use case                               | Priority    |
 | ------------------- | -------------------------------------- | ----------- |
@@ -188,42 +396,11 @@ Dealerships using it for test drive booking, service reminders, lead qualificati
 | Agencies            | Run campaigns for clients              | Medium-high |
 | Automotive          | Leads, service, test drives            | Medium      |
 
-### How we want to position:
-
-We want to lead with wealth management lead qualification as the concrete demo, then explicitly show that the same engine generates education, insurance, real estate, or appointment booking workflows from a different prompt. This proves the platform is horizontal infrastructure, not a one-off vertical bot, while still giving the judges one clear, well-executed use case to evaluate.
-
 ## Business Model
 
-Potential monetization paths worth mentioning in the pitch, even briefly, since judges reward "real world impact" and viability beyond the hackathon:
+Potential monetisation paths include:
 
-- **Usage-based pricing**: charge per generated workflow and per campaign minute/call, layered on top of CALL-E's own usage costs, similar to how infrastructure tools price above a base API.
-- **Seat-based pricing for developer and business users**: teams pay per seat for workflow editing, campaign management, and analytics access.
-- **Agency / BPO tier**: a higher tier for agencies managing multiple client workflows and campaigns from one dashboard, priced on client count or campaign volume.
-- **Template marketplace**: vertical specific workflow templates (wealth management qualification, student counseling, insurance intake) that can be sold, shared, or contributed back to the CALL-E ecosystem as reusable skills or plugins.
-
-## Alignment with CALL-E Judging Criteria
-
-**Technical Implementation (current).** Veyra imports CALL-E's official TypeScript SDK and calls `client.calls.create` only after an authenticated user approves an exact one-call preview and all server-side live gates pass. The request schema is constrained to CALL-E's supported JSON Schema subset and validated before dispatch. Fake mode is the default even when credentials exist, and performs no SDK request. The one live SDK submission uses a stable idempotency key bound to the authenticated user and exact recipient, task, schema, and metadata, with no automatic retry path.
-
-**Technical Implementation (current compiler path).** The edited graph is compiled by the credential-free Python engine into a personalized task and result schema. The owned workflow, campaign, first contact, and compiled request are persisted under Postgres RLS. Contact data is explicitly marked as untrusted data in the generated instruction, and every preview recompiles and revalidates the current recipient before entering the Phase 1 approval boundary.
-
-**Technical Implementation (current lifecycle).** Phase 3 dispatches one independently compiled request per approved contact, creates the durable call record before submission, and never automatically retries an uncertain submission. Terminal outcomes are captured webhook-first with secret delivery URLs, event-id deduplication, correlation checks, explicit null structured-result handling, and persistent summaries/transcripts. Phase 4 binds the CALL-E locale and optional start time into the exact approval, safely dispatches due schedules through an idempotent authenticated worker, and exports owned results as spreadsheet-safe CSV.
-
-**Creativity and Originality.** The generation layer turns a plain-English description of a calling process into an editable conversation graph with branching, qualification scoring, and a structured output schema. The graph is Veyra's authoring abstraction, flattened at compile time rather than shipped to CALL-E, which is what lets a non-technical user edit call logic visually and still get a well-formed single-task call.
-
-**Real World Impact.** The same engine generates wealth management, education, and insurance qualification workflows from different prompts, targeting teams that today either staff manual calling floors or hand-build a voice agent per campaign.
-
-**Presentation target.** The final demo should run the full path on camera: prompt in,
-workflow generated and edited, a campaign compiled and approved, one authorized real call
-placed, and its webhook-backed structured result returned to the dashboard. Phase 4 now
-supports that deployed path; the remaining work is to run and record it with the team's
-authorized CALL-E recipient and production credentials.
-
-## Our Submission Checklist
-
-- [ ] Open pull request to https://github.com/CALLE-AI/awesome-phone-call-agents under the correct contribution area
-- [ ] Record a public YouTube or Vimeo demo video, about three minutes
-- [ ] Submit CALL-E account email
-- [ ] Submit PR URL on Devpost
-- [ ] Optional: link to a functional demo application
-- [ ] Optional: submit CALL-E Feedback Survey for Most Valuable Feedback prize eligibility
+- **Usage-based pricing**
+  charge per generated workflow and campaign call or minute.
+- **Seat-based pricing**
+  teams pay per seat for workflow editing, campaign management, and analytics
