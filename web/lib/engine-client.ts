@@ -25,6 +25,52 @@ export class EngineError extends Error {
   }
 }
 
+/**
+ * FastAPI wraps every HTTPException as `{"detail": ...}` — a string for most engine
+ * errors (CalleSchemaError, UnsupportedCallFeatureError, generation/edit failures), a
+ * list of pydantic error objects for a malformed request body, or `{message, errors}`
+ * for a graph-validation failure. Without unwrapping this, EngineError.message was the
+ * raw JSON text, which routes then re-embedded as a `detail` field in their own JSON
+ * response — a JSON string inside JSON, unreadable in the UI. This turns any of those
+ * shapes into one plain, displayable string; unrecognized shapes fall back to the raw
+ * text rather than swallowing information.
+ */
+function engineErrorMessage(text: string, fallback: string): string {
+  if (!text) return fallback;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  if (typeof parsed !== "object" || parsed === null) return text;
+  const detail = (parsed as Record<string, unknown>).detail;
+
+  if (typeof detail === "string") return detail;
+
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) =>
+        typeof item === "object" && item !== null && typeof (item as { msg?: unknown }).msg === "string"
+          ? (item as { msg: string }).msg
+          : null,
+      )
+      .filter((message): message is string => message !== null);
+    if (messages.length) return messages.join("; ");
+  }
+
+  if (typeof detail === "object" && detail !== null) {
+    const { message, errors } = detail as { message?: unknown; errors?: unknown };
+    const summary = typeof message === "string" ? message : fallback;
+    const issues = Array.isArray(errors)
+      ? errors.filter((error): error is string => typeof error === "string")
+      : [];
+    return issues.length ? `${summary}: ${issues.join("; ")}` : summary;
+  }
+
+  return text;
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   let response: Response;
   try {
@@ -42,7 +88,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 
   const text = await response.text();
   if (!response.ok) {
-    throw new EngineError(response.status, text || response.statusText);
+    throw new EngineError(response.status, engineErrorMessage(text, response.statusText));
   }
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }

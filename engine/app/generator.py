@@ -157,6 +157,16 @@ permitted next-step disposition values.
 6. Respond with only the workflow object matching the required schema. Do not include \
 x/y layout coordinates or a workflow-level id — the caller assigns those.
 
+CALL-E's Calls API places exactly one adaptive AI conversation per call and cannot \
+connect that call live to a human mid-conversation — there is no in-call transfer \
+capability available through this API, and even where CALL-E's platform supports \
+transfer elsewhere, it must be separately enabled per account. If the process escalates \
+to a human (a specialist, advisor, broker, or agent), always phrase that step as an \
+asynchronous follow-up the AI promises on the call — for example "a specialist will \
+call you back within one business day" or "we will email you a summary" — never as a \
+live handoff. Do not write step text like "stay on the line", "connecting you now", \
+"transferring you", or "put you through".
+
 If the prompt is ambiguous, default to a sensible assumption rather than asking a \
 clarifying question — for example, if no escalation path is described, default to a \
 single qualified / not-ready branch. Keep the graph as small as the process allows; do \

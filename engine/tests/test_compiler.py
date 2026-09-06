@@ -1,5 +1,7 @@
+import pytest
+
 from app.calle_schema import assert_calle_schema_subset
-from app.compiler import ESCAPE_HATCH, compile_workflow
+from app.compiler import ESCAPE_HATCH, UnsupportedCallFeatureError, compile_workflow
 from app.models.campaign import Contact
 from app.sample_workflow import SAMPLE_WORKFLOW
 
@@ -188,3 +190,51 @@ def test_en_us_locale_has_no_language_instruction():
     assert "Language:" not in request.task
     assert "Hinglish" not in request.task
     assert "Indian English" not in request.task
+
+
+def test_live_transfer_language_is_rejected_at_compile_time():
+    """CALL-E's Calls API has no live in-call transfer to a human — its own pre-flight
+    check rejects a task that describes one with call_not_ready, but only at actual
+    dispatch time in production. Catching it here, at compile time, is the whole point:
+    same failure, much earlier, with an explanation instead of an opaque API error."""
+    workflow = SAMPLE_WORKFLOW.model_copy(deep=True)
+    workflow.nodes[-1].say = "Perfect! Connecting you to a licensed advisor now. Please stay on the line."
+    with pytest.raises(UnsupportedCallFeatureError, match="stay on the line"):
+        compile_workflow(workflow, "campaign-1", _contact(), "https://example.com/api/calle/webhook")
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "Connecting you to a broker now.",
+        "I'll transfer you to a specialist.",
+        "Let me transfer the call to our support team.",
+        "Putting you through to an agent.",
+        "Please hold while I connect you.",
+    ],
+)
+def test_each_known_live_transfer_phrase_is_caught(phrase: str) -> None:
+    workflow = SAMPLE_WORKFLOW.model_copy(deep=True)
+    workflow.nodes[-1].say = phrase
+    with pytest.raises(UnsupportedCallFeatureError):
+        compile_workflow(workflow, "campaign-1", _contact(), "https://example.com/api/calle/webhook")
+
+
+def test_unrelated_use_of_the_word_transfer_is_not_flagged():
+    """The check targets live-handoff phrasing, not the bare word "transfer" — a
+    non-call sense of the word (e.g. transferring data/records) must stay unflagged."""
+    workflow = SAMPLE_WORKFLOW.model_copy(deep=True)
+    workflow.nodes[-1].say = "Thanks — I'll transfer your details to our records team by email."
+    request = compile_workflow(
+        workflow, "campaign-1", _contact(), "https://example.com/api/calle/webhook"
+    )
+    assert "transfer your details" in request.task
+
+
+def test_a_followup_promise_is_not_flagged():
+    workflow = SAMPLE_WORKFLOW.model_copy(deep=True)
+    workflow.nodes[-1].say = "A licensed advisor will review your details and call you back within one business day."
+    request = compile_workflow(
+        workflow, "campaign-1", _contact(), "https://example.com/api/calle/webhook"
+    )
+    assert "call you back" in request.task

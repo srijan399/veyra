@@ -12,6 +12,7 @@ request body. Next.js's lib/calle-client.ts is what actually dispatches it.
 from __future__ import annotations
 
 import json
+import re
 
 from app.calle_schema import assert_calle_schema_subset
 from app.models.campaign import CalleCallRequest, Contact
@@ -23,6 +24,48 @@ _OPERATOR_PHRASE = {
     "eq": "equals",
     "in": "is one of",
 }
+
+
+class UnsupportedCallFeatureError(ValueError):
+    """Raised when a workflow describes a live in-call capability the Calls API cannot
+    perform — currently: connecting the call to a human mid-conversation. CALL-E's Calls
+    API runs exactly one adaptive AI conversation and extracts structured data at the
+    end; it has no way to hand the live call to a human, and even elsewhere on CALL-E's
+    platform, transfer is a separate feature that must be explicitly enabled per
+    account. Sent as-is, this gets rejected by CALL-E's own pre-flight check with
+    `call_not_ready` — only surfacing at actual dispatch time, in production, per
+    contact. Catching it here instead means a clear, actionable error at compile time,
+    the same moment CALL-E-schema-subset violations are already caught."""
+
+
+# Deliberately phrase-based rather than keyword-based ("transfer" alone would flag a
+# perfectly fine "I'll transfer your details to our records"): each pattern targets the
+# specific phrasing of promising a *live* handoff, since that's what CALL-E's own
+# validator appears to flag (see the real rejection this was written from: "Connecting
+# you to a licensed insurance broker now. Please stay on the line.").
+_LIVE_TRANSFER_PATTERNS = [
+    re.compile(r"stay on the line", re.IGNORECASE),
+    re.compile(r"connecting you (to|now)", re.IGNORECASE),
+    re.compile(r"transfer(?:ring)? (?:you\b|the call\b|this call\b)", re.IGNORECASE),
+    re.compile(r"put(?:ting)? you through", re.IGNORECASE),
+    re.compile(r"patch(?:ing)? you through", re.IGNORECASE),
+    re.compile(r"hold (?:on |while )?(?:i|we)(?:'ll| will)? connect", re.IGNORECASE),
+]
+
+
+def _assert_no_live_transfer_language(task: str) -> None:
+    for pattern in _LIVE_TRANSFER_PATTERNS:
+        match = pattern.search(task)
+        if match:
+            raise UnsupportedCallFeatureError(
+                'This workflow describes connecting the call to a human live ("'
+                + match.group(0)
+                + '"), which CALL-E\'s Calls API cannot do — it runs one adaptive AI '
+                "conversation only, with no in-call handoff to a human. Rephrase this "
+                'step as an asynchronous follow-up instead (for example, "a specialist '
+                'will call you back within one business day") rather than a live '
+                "transfer."
+            )
 
 # CALL-E's Calls API takes a BCP-47 recipient.locale as a TTS voice *hint*, not a
 # selectable voice id — there is no separate accent/voice parameter (see
@@ -63,6 +106,7 @@ def compile_workflow(
     locale: str = "en-IN",
 ) -> CalleCallRequest:
     task = _render_task(workflow, contact, locale)
+    _assert_no_live_transfer_language(task)
     result_schema = _render_result_schema(workflow.outcome_schema)
     assert_calle_schema_subset(result_schema)
 

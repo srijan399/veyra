@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, ValidationError
 
 from app.calle_schema import CalleSchemaError
-from app.compiler import compile_workflow
+from app.compiler import UnsupportedCallFeatureError, compile_workflow
 from app.config import settings
 from app.generator import WorkflowGenerationError, edit_workflow, generate_workflow
 from app.graph_validation import ValidationResult, validate_graph
@@ -144,4 +144,6 @@ def compile_endpoint(request: CompileRequest) -> CalleCallRequest:
             workflow, request.campaign_id, request.contact, request.webhook_url, request.locale
         )
     except CalleSchemaError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except UnsupportedCallFeatureError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
