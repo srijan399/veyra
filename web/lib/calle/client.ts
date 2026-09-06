@@ -1,5 +1,6 @@
 import type { JsonObject, SafeCallDraft, SafeCallPreview } from "./safety";
 import type { CallMode } from "./safety";
+import { maskPhone } from "./safety";
 import { CallConfigurationError } from "./client-error";
 import { liveCalleWebhookUrl } from "./webhook-url";
 
@@ -92,7 +93,7 @@ export async function executeApprovedCall(
 
   if (currentMode === "fake") {
     const structuredResult = fakeValue(draft.resultSchema);
-    return {
+    const execution: SafeCallExecution = {
       mode: "fake",
       callId: `fake_${preview.approvalDigest.slice(0, 16)}`,
       status: "completed",
@@ -103,29 +104,51 @@ export async function executeApprovedCall(
       idempotencyKey: preview.idempotencyKey,
       externalSideEffect: false,
     };
+    console.log(
+      `[calle] fake mode — no request sent. phone=${maskPhone(draft.phone)} locale=${draft.locale} ` +
+        `callId=${execution.callId} status=${execution.status}`,
+    );
+    return execution;
   }
 
   const config = liveConfig();
+  const hasWebhook = typeof draft.metadata?.veyraCallResultId === "string";
+  const requestBody = {
+    task: draft.task,
+    recipient: { phone: draft.phone, locale: draft.locale },
+    resultSchema: draft.resultSchema,
+    ...(hasWebhook ? { webhookUrl: liveCalleWebhookUrl() } : {}),
+    metadata: {
+      ...(draft.metadata ?? {}),
+      veyraApprovalDigest: preview.approvalDigest,
+      veyraCallMode: "live",
+    },
+  };
+  console.log(
+    `[calle] → calls.create phone=${maskPhone(draft.phone)} locale=${draft.locale} ` +
+      `idempotencyKey=${preview.idempotencyKey} taskChars=${draft.task.length} hasWebhook=${hasWebhook}`,
+  );
+  console.log(`[calle] → task text:\n${draft.task}`);
+  console.log(`[calle] → result schema: ${JSON.stringify(draft.resultSchema)}`);
+
   // Keep fake mode entirely credential-free and side-effect-free. The official SDK is
   // not loaded until every live gate above has passed.
   const { CalleClient } = await import("@call-e/calle");
   const client = new CalleClient({ apiKey: config.apiKey, baseUrl: config.baseUrl });
-  const call = await client.calls.create(
-    {
-      task: draft.task,
-      recipient: { phone: draft.phone, locale: draft.locale },
-      resultSchema: draft.resultSchema,
-      ...(typeof draft.metadata?.veyraCallResultId === "string"
-        ? { webhookUrl: liveCalleWebhookUrl() }
-        : {}),
-      metadata: {
-        ...(draft.metadata ?? {}),
-        veyraApprovalDigest: preview.approvalDigest,
-        veyraCallMode: "live",
-      },
-    },
-    { idempotencyKey: preview.idempotencyKey },
+  const call = await client.calls.create(requestBody, { idempotencyKey: preview.idempotencyKey });
+
+  console.log(
+    `[calle] ← calls.create responded callId=${call.id} status=${call.status} ` +
+      `taskCompleted=${call.taskCompleted ?? "n/a"} confidence=${call.completionConfidence?.label ?? "n/a"} ` +
+      `structuredResult=${call.structuredResult ? "present" : "null"} ` +
+      `failureCode=${call.failureCode ?? "none"} failureMessage=${call.failureMessage ?? "none"}`,
   );
+  if (call.structuredResult) {
+    console.log(`[calle] ← structured result: ${JSON.stringify(call.structuredResult)}`);
+  }
+  if (call.summary) {
+    console.log(`[calle] ← summary: ${call.summary}`);
+  }
 
   return {
     mode: "live",
