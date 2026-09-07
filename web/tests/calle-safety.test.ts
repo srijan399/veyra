@@ -207,8 +207,14 @@ test("fake execution returns schema-shaped data without an external side effect"
     assert.equal(execution.mode, "fake");
     assert.equal(execution.externalSideEffect, false);
     assert.deepEqual(execution.structuredResult, {
-      consent: false,
+      consent: true,
       outcome: "follow_up",
     });
+    assert.equal(execution.qualified, true);
+    assert.match(execution.summary ?? "", /consented.*follow-up/i);
+    assert.match(
+      execution.transcript ?? "",
+      /Simulated transcript[\s\S]*no phone call was placed/,
+    );
   });
 });

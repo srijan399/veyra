@@ -59,11 +59,16 @@ export async function dispatchPreparedCampaign(params: {
     return { status: "already_launched" };
   }
 
-  // Every call is now reserved (callResults rows exist with status "submitting"). Actual
-  // execution happens off the request path — one queued job per call, picked up by the
+  // Fake mode completes locally so a safe demo needs neither RabbitMQ nor a worker. Live
+  // execution stays off the request path — one queued job per call, picked up by the
   // standalone worker in scripts/dispatch-worker.ts.
   for (const call of params.prepared.calls) {
-    await publishCallDispatch({ campaignId: params.campaignId, call } satisfies CallDispatchJob);
+    const job = { campaignId: params.campaignId, call } satisfies CallDispatchJob;
+    if (params.prepared.preview.mode === "fake") {
+      await processCallDispatchJob(job);
+    } else {
+      await publishCallDispatch(job);
+    }
   }
 
   return { status: "submitted" };

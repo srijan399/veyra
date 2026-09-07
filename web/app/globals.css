@@ -101,6 +101,28 @@ body {
   background: rgb(236 48 19 / 0.35);
 }
 
+.veyra-dropdown-scrollbar {
+  scrollbar-color: var(--color-ember) var(--color-panel);
+  scrollbar-width: thin;
+}
+
+.veyra-dropdown-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+
+.veyra-dropdown-scrollbar::-webkit-scrollbar-track {
+  background: var(--color-panel);
+}
+
+.veyra-dropdown-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--color-ember);
+  border: 1px solid var(--color-panel);
+}
+
+.veyra-dropdown-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--color-flame);
+}
+
 :focus-visible {
   outline: 2px solid var(--color-flame);
   outline-offset: 2px;

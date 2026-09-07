@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { useActionState } from 'react';
 
 import type { AuthFormState } from './actions';
@@ -67,12 +68,14 @@ export default function AuthForm({
           href="/"
           className="mb-[34px] flex items-center gap-[13px] text-bone no-underline"
         >
-          <span className="grid flex-none grid-cols-[repeat(2,10px)] grid-rows-[repeat(2,10px)] gap-0.5">
-            <span className="bg-flame" />
-            <span className="bg-flame" />
-            <span className="bg-bone/22" />
-            <span className="bg-flame" />
-          </span>
+          <Image
+            src="/icon.png"
+            alt=""
+            width={36}
+            height={36}
+            priority
+            className="size-9 flex-none rounded-lg"
+          />
           <span className="text-[26px] font-extrabold leading-none tracking-[.16em]">
             VEYRA
           </span>

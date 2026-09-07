@@ -166,7 +166,12 @@ export async function recordCallSubmission(params: {
         calleCallId: params.execution.callId,
         status,
         capturedData: params.execution.structuredResult,
-        qualified: qualified(params.execution.structuredResult),
+        qualified:
+          params.execution.qualified !== undefined
+            ? params.execution.qualified
+            : qualified(params.execution.structuredResult),
+        summary: params.execution.summary ?? null,
+        transcript: params.execution.transcript ?? null,
         startedAt: new Date(),
         completedAt,
       })

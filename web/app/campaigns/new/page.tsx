@@ -38,7 +38,7 @@ export default async function NewCampaignPage({
   return (
     <div className="flex min-h-screen flex-col bg-ink">
       <StepHeader current="campaign" />
-      <main className="mx-auto flex w-full max-w-210 flex-1 flex-col items-start px-12 py-20">
+      <main className="mx-auto flex w-full max-w-[616px] flex-1 flex-col items-start px-6 py-14 md:px-12 md:py-20">
         <div className="text-[10.5px] uppercase tracking-[.14em] text-bone/45">
           New campaign
         </div>
