@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   clampGraphZoom,
   type GraphPoint,
@@ -71,6 +71,12 @@ type TouchGesture =
       startViewport: GraphViewport;
     };
 
+type SafariGestureEvent = Event & {
+  clientX: number;
+  clientY: number;
+  scale: number;
+};
+
 const INITIAL_VIEWPORT: GraphViewport = { x: 0, y: 0, scale: 1 };
 
 export default function WorkflowGraph({
@@ -111,6 +117,97 @@ export default function WorkflowGraph({
     const second = touchPoint(touches[1]);
     return Math.hypot(second.x - first.x, second.y - first.y);
   };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const isInsideGraph = (clientX: number, clientY: number) => {
+      const rect = container.getBoundingClientRect();
+      return (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      );
+    };
+
+    // Chromium exposes trackpad pinch as Ctrl+wheel. Capture it at window level so
+    // the browser cannot begin page zoom before the event reaches the graph element.
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey || !isInsideGraph(event.clientX, event.clientY)) return;
+      event.preventDefault();
+
+      const rect = container.getBoundingClientRect();
+      const current = viewportRef.current;
+      const next = zoomGraphAt(
+        current,
+        current.scale * Math.exp(-event.deltaY * 0.01),
+        { x: event.clientX - rect.left, y: event.clientY - rect.top },
+      );
+      viewportRef.current = next;
+      setViewportState(next);
+    };
+
+    let safariPinch: { anchor: GraphPoint; viewport: GraphViewport } | null = null;
+
+    // Safari uses non-standard gesture events for trackpad pinch instead of
+    // Ctrl+wheel. Keep these native and non-passive for the same reason.
+    const handleGestureStart = (rawEvent: Event) => {
+      const event = rawEvent as SafariGestureEvent;
+      if (!isInsideGraph(event.clientX, event.clientY)) return;
+      event.preventDefault();
+
+      const rect = container.getBoundingClientRect();
+      safariPinch = {
+        anchor: { x: event.clientX - rect.left, y: event.clientY - rect.top },
+        viewport: viewportRef.current,
+      };
+      setDragging(true);
+    };
+
+    const handleGestureChange = (rawEvent: Event) => {
+      if (!safariPinch) return;
+      const event = rawEvent as SafariGestureEvent;
+      event.preventDefault();
+
+      const next = zoomGraphAt(
+        safariPinch.viewport,
+        safariPinch.viewport.scale * event.scale,
+        safariPinch.anchor,
+      );
+      viewportRef.current = next;
+      setViewportState(next);
+    };
+
+    const handleGestureEnd = (event: Event) => {
+      if (!safariPinch) return;
+      event.preventDefault();
+      safariPinch = null;
+      setDragging(false);
+    };
+
+    window.addEventListener("wheel", handleWheel, { passive: false, capture: true });
+    window.addEventListener("gesturestart", handleGestureStart, {
+      passive: false,
+      capture: true,
+    });
+    window.addEventListener("gesturechange", handleGestureChange, {
+      passive: false,
+      capture: true,
+    });
+    window.addEventListener("gestureend", handleGestureEnd, {
+      passive: false,
+      capture: true,
+    });
+
+    return () => {
+      window.removeEventListener("wheel", handleWheel, true);
+      window.removeEventListener("gesturestart", handleGestureStart, true);
+      window.removeEventListener("gesturechange", handleGestureChange, true);
+      window.removeEventListener("gestureend", handleGestureEnd, true);
+    };
+  }, []);
 
   /** Runs `move` on pointermove until pointerup, wherever the pointer goes. */
   const trackPointer = (move: (e: PointerEvent) => void) => {
@@ -274,18 +371,6 @@ export default function WorkflowGraph({
       onTouchCancel={() => {
         touchGesture.current = null;
         setDragging(false);
-      }}
-      onWheel={(event) => {
-        if (!event.ctrlKey) return;
-        event.preventDefault();
-        const current = viewportRef.current;
-        setViewport(
-          zoomGraphAt(
-            current,
-            current.scale * Math.exp(-event.deltaY * 0.01),
-            localPoint(event.clientX, event.clientY),
-          ),
-        );
       }}
       className={`relative flex-1 overflow-hidden bg-ink bg-[linear-gradient(rgba(243,242,242,.05)_1px,transparent_1px),linear-gradient(90deg,rgba(243,242,242,.05)_1px,transparent_1px)] bg-[length:32px_32px] ${
         dragging ? "cursor-grabbing" : "cursor-grab"

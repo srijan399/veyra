@@ -87,6 +87,7 @@ class Workflow(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
+    name: str | None = None
     goal: str
     nodes: list[WorkflowNode]
     edges: list[WorkflowEdge]

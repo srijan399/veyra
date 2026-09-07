@@ -1,8 +1,11 @@
-import PromptComposer from "@/components/PromptComposer";
-import StepHeader from "@/components/StepHeader";
+import Image from 'next/image';
 
-const KICKER = "text-[10.5px] uppercase tracking-[.14em] text-bone/45";
-const RULE = "border-t-2 border-bone/[.26]";
+import MobileLandingPage from '@/components/MobileLandingPage';
+import PromptComposer from '@/components/PromptComposer';
+import StepHeader from '@/components/StepHeader';
+
+const KICKER = 'text-[10.5px] uppercase tracking-[.14em] text-bone/45';
+const RULE = 'border-t-2 border-bone/[.26]';
 
 function Section({
   kicker,
@@ -22,50 +25,53 @@ function Section({
 }
 
 const AUDIENCE = [
-  ["Sales teams", "Lead qualification", "High"],
-  ["Call centers / BPOs", "Automated outbound campaigns", "High"],
-  ["Financial services", "Advisor / insurance lead qualification", "High"],
-  ["Education", "Student qualification", "Medium-high"],
-  ["Agencies", "Run campaigns for clients", "Medium-high"],
-  ["Automotive", "Leads, service, test drives", "Medium"],
+  ['Sales teams', 'Lead qualification', 'High'],
+  ['Call centers / BPOs', 'Automated outbound campaigns', 'High'],
+  ['Financial services', 'Advisor / insurance lead qualification', 'High'],
+  ['Education', 'Student qualification', 'Medium-high'],
+  ['Agencies', 'Run campaigns for clients', 'Medium-high'],
+  ['Automotive', 'Leads, service, test drives', 'Medium'],
 ];
 
 const PIPELINE = [
-  ["01", "Prompt", "Describe the process in plain English."],
+  ['01', 'Prompt', 'Describe the process in plain English.'],
   [
-    "02",
-    "Generate & edit",
-    "Nodes, branches, qualification rules and capture schema, editable as a graph.",
+    '02',
+    'Generate & edit',
+    'Nodes, branches, qualification rules and capture schema, editable as a graph.',
   ],
   [
-    "03",
-    "Compile to call",
-    "Becomes a call instruction CALL-E executes per contact, over SDK, API or MCP.",
+    '03',
+    'Compile to call',
+    'Becomes a call instruction CALL-E executes per contact, over SDK, API or MCP.',
   ],
   [
-    "04",
-    "Run & read",
-    "One call per contact; status, transcript and captured fields to CRM or webhook — including null results.",
+    '04',
+    'Run & read',
+    'One call per contact; status, transcript and captured fields to CRM or webhook — including null results.',
   ],
 ];
 
 const BUSINESS_MODEL = [
   [
-    "Usage-based",
+    'Usage-based',
     "Per generated workflow and per campaign minute, layered above CALL-E's own usage cost.",
   ],
-  ["Seats", "Per-seat for workflow editing, campaign management and analytics."],
   [
-    "Agency / BPO tier",
-    "Multiple client workflows from one dashboard, priced on client count or campaign volume.",
+    'Seats',
+    'Per-seat for workflow editing, campaign management and analytics.',
   ],
   [
-    "Template marketplace",
-    "Vertical workflow templates sold, shared, or contributed back to the CALL-E ecosystem.",
+    'Agency / BPO tier',
+    'Multiple client workflows from one dashboard, priced on client count or campaign volume.',
+  ],
+  [
+    'Template marketplace',
+    'Vertical workflow templates sold, shared, or contributed back to the CALL-E ecosystem.',
   ],
 ];
 
-export default function Home() {
+function DesktopLandingPage() {
   return (
     <div className="flex min-h-screen flex-col bg-ink">
       <StepHeader current="prompt" />
@@ -74,16 +80,20 @@ export default function Home() {
         {/* — hero — */}
         <div className="flex min-h-[calc(100vh-56px)] flex-col justify-center bg-[linear-gradient(rgba(243,242,242,.035)_1px,transparent_1px),linear-gradient(90deg,rgba(243,242,242,.035)_1px,transparent_1px)] bg-[length:64px_64px] p-12">
           <div className="mx-auto w-full max-w-[820px] animate-vfade">
-            <div className="mb-4 flex items-end gap-[18px] border-b-2 border-bone/[.26] pb-4">
-              <span className="mb-1.5 grid flex-none grid-cols-[repeat(2,14px)] grid-rows-[repeat(2,14px)] gap-[3px]">
-                <span className="bg-flame" />
-                <span className="bg-flame" />
-                <span className="bg-bone/[.22]" />
-                <span className="bg-flame" />
-              </span>
-              <span className="text-[52px] font-extrabold leading-[.9] tracking-[.16em]">
-                VEYRA
-              </span>
+            <div className="mb-4 flex items-end border-b-2 border-bone/[.26] pb-4">
+              <div className="flex items-center gap-[18px]">
+                <Image
+                  src="/icon.png"
+                  alt=""
+                  width={56}
+                  height={56}
+                  priority
+                  className="size-14 flex-none rounded-xl"
+                />
+                <span className="text-[52px] font-extrabold leading-[.9] tracking-[.16em]">
+                  VEYRA
+                </span>
+              </div>
               <span className="flex-1" />
               <span className="text-right text-[11px] uppercase leading-[1.5] tracking-[.14em] text-bone/45">
                 Voice workflow
@@ -94,8 +104,8 @@ export default function Home() {
 
             <div className="mb-[34px] flex items-center justify-between gap-4">
               <span className="text-[11.5px] uppercase tracking-[.14em] text-bone/50">
-                Prompt <span className="text-flame">·</span> Workflow{" "}
-                <span className="text-flame">·</span> Campaign{" "}
+                Prompt <span className="text-flame">·</span> Workflow{' '}
+                <span className="text-flame">·</span> Campaign{' '}
                 <span className="text-flame">·</span> Results
               </span>
               <button
@@ -110,8 +120,8 @@ export default function Home() {
               Describe the calling process.
             </h1>
             <p className="mb-7 max-w-[560px] text-[15px] text-bone/55">
-              Plain English in. An editable voice-agent workflow out, compiled to
-              CALL-E and dialled from your contact list.
+              Plain English in. An editable voice-agent workflow out, compiled
+              to CALL-E and dialled from your contact list.
             </p>
 
             <PromptComposer />
@@ -140,15 +150,18 @@ export default function Home() {
                     real calls.
                   </p>
 
-                  <div className={`grid gap-0 pt-[22px] md:grid-cols-2 ${RULE}`}>
+                  <div
+                    className={`grid gap-0 pt-[22px] md:grid-cols-2 ${RULE}`}
+                  >
                     <div className="border-bone/[.16] pr-[26px] md:border-r">
                       <div className={`${KICKER} mb-2.5`}>Positioning</div>
                       <p className="m-0 text-[15px] leading-[1.6] text-bone/85">
                         &ldquo;We help businesses turn any outbound calling
-                        process into an executable AI workflow. Describe what the
-                        agent needs to accomplish, our platform generates the
-                        conversation flow, qualification logic and structured
-                        outputs, and CALL-E handles the actual calls.&rdquo;
+                        process into an executable AI workflow. Describe what
+                        the agent needs to accomplish, our platform generates
+                        the conversation flow, qualification logic and
+                        structured outputs, and CALL-E handles the actual
+                        calls.&rdquo;
                       </p>
                     </div>
                     <div className="pl-[26px]">
@@ -156,8 +169,9 @@ export default function Home() {
                         For a developer audience
                       </div>
                       <p className="m-0 text-[15px] leading-[1.6] text-bone/85">
-                        &ldquo;A development and orchestration layer for building
-                        production phone-call workflows with CALL-E.&rdquo;
+                        &ldquo;A development and orchestration layer for
+                        building production phone-call workflows with
+                        CALL-E.&rdquo;
                       </p>
                     </div>
                   </div>
@@ -166,16 +180,16 @@ export default function Home() {
                     className={`mt-[22px] grid gap-0 pt-[22px] md:grid-cols-3 ${RULE}`}
                   >
                     {[
-                      ["6.4s", "Prompt to compiled workflow"],
-                      ["1,691", "Calls placed through CALL-E"],
-                      ["38%", "Median qualified rate"],
+                      ['6.4s', 'Prompt to compiled workflow'],
+                      ['1,691', 'Calls placed through CALL-E'],
+                      ['38%', 'Median qualified rate'],
                     ].map(([figure, label], i) => (
                       <div
                         key={label}
                         className={`border-bone/[.16] ${
-                          i === 0 ? "pr-5 md:border-r" : ""
-                        } ${i === 1 ? "px-5 md:border-r" : ""} ${
-                          i === 2 ? "pl-5" : ""
+                          i === 0 ? 'pr-5 md:border-r' : ''
+                        } ${i === 1 ? 'px-5 md:border-r' : ''} ${
+                          i === 2 ? 'pl-5' : ''
                         }`}
                       >
                         <div className="text-[32px] font-extrabold leading-none tracking-[-.03em]">
@@ -202,8 +216,8 @@ export default function Home() {
                   </p>
                   <div className="flex flex-col gap-3">
                     {[
-                      "Manual call teams are expensive, inconsistent, and hard to scale up or down quickly.",
-                      "Hand-built agents need an AI engineer to translate a business process into prompts, conversation states and branching logic — then rebuild it every time the process changes.",
+                      'Manual call teams are expensive, inconsistent, and hard to scale up or down quickly.',
+                      'Hand-built agents need an AI engineer to translate a business process into prompts, conversation states and branching logic — then rebuild it every time the process changes.',
                     ].map((line) => (
                       <div key={line} className="flex gap-3">
                         <span className="mt-[7px] size-[7px] flex-none bg-flame" />
@@ -217,25 +231,25 @@ export default function Home() {
                 <div className="pl-7">
                   <div className={`${KICKER} mb-2.5`}>The solution</div>
                   <p className="mb-4 text-base leading-[1.6] text-bone/85">
-                    Veyra is a workflow generation and orchestration layer on top
-                    of CALL-E.
+                    Veyra is a workflow generation and orchestration layer on
+                    top of CALL-E.
                   </p>
                   <p className="m-0 text-[13.5px] leading-[1.6] text-bone/60">
                     A business user describes the call process in natural
                     language. Veyra generates a structured, editable workflow —
-                    nodes, branching logic, qualification scoring, data capture —
-                    and compiles it into a CALL-E call instruction. A
+                    nodes, branching logic, qualification scoring, data capture
+                    — and compiles it into a CALL-E call instruction. A
                     developer refines it, connects a contact list or CRM, and
                     launches a live campaign that returns structured results.
                   </p>
                   <div
                     className={`mt-5 pt-4 text-[13px] leading-[1.6] text-bone/75 ${RULE}`}
                   >
-                    The product moment: say{" "}
+                    The product moment: say{' '}
                     <span className="text-blush">
                       &ldquo;add a question about approximate investable assets
                       after risk tolerance&rdquo;
-                    </span>{" "}
+                    </span>{' '}
                     and the workflow updates — no hand-editing prompts or state
                     machines.
                   </div>
@@ -250,15 +264,17 @@ export default function Home() {
                   <div
                     key={n}
                     className={`border-bone/[.16] ${
-                      i === 0 ? "pr-[18px] md:border-r" : ""
-                    } ${i > 0 && i < 3 ? "px-[18px] md:border-r" : ""} ${
-                      i === 3 ? "pl-[18px]" : ""
+                      i === 0 ? 'pr-[18px] md:border-r' : ''
+                    } ${i > 0 && i < 3 ? 'px-[18px] md:border-r' : ''} ${
+                      i === 3 ? 'pl-[18px]' : ''
                     }`}
                   >
                     <div className="mb-[9px] text-[10.5px] tracking-[.1em] text-flame">
                       {n}
                     </div>
-                    <div className="mb-1.5 text-[15px] font-extrabold">{title}</div>
+                    <div className="mb-1.5 text-[15px] font-extrabold">
+                      {title}
+                    </div>
                     <div className="text-[13.5px] leading-[1.6] text-bone/60">
                       {body}
                     </div>
@@ -289,11 +305,11 @@ export default function Home() {
             {/* — who it is for — */}
             <Section kicker="Who it is for">
               <p className="mb-6 max-w-[700px] text-base leading-[1.6] text-bone/85">
-                Sales and operations teams that run repetitive outbound campaigns
-                and need structured outcomes from every conversation. We lead with
-                wealth management qualification, then show the same engine
-                generating education, insurance or appointment-booking workflows
-                from a different prompt.
+                Sales and operations teams that run repetitive outbound
+                campaigns and need structured outcomes from every conversation.
+                We lead with wealth management qualification, then show the same
+                engine generating education, insurance or appointment-booking
+                workflows from a different prompt.
               </p>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-[13.5px]">
@@ -327,7 +343,7 @@ export default function Home() {
                         </td>
                         <td
                           className={`border-b border-bone/[.13] py-[11px] text-right ${
-                            priority === "High" ? "text-blush" : "text-bone/60"
+                            priority === 'High' ? 'text-blush' : 'text-bone/60'
                           }`}
                         >
                           {priority}
@@ -350,8 +366,8 @@ export default function Home() {
                   <div
                     key={title}
                     className={`border-bone/[.16] ${
-                      i % 2 === 0 ? "pr-[26px] md:border-r" : "pl-[26px]"
-                    } ${i < 2 ? "border-b pb-6" : "pt-6"}`}
+                      i % 2 === 0 ? 'pr-[26px] md:border-r' : 'pl-[26px]'
+                    } ${i < 2 ? 'border-b pb-6' : 'pt-6'}`}
                   >
                     <div className="mb-[7px] text-[15px] font-extrabold">
                       {title}
@@ -369,10 +385,10 @@ export default function Home() {
               className={`flex flex-wrap items-center gap-x-[26px] gap-y-3.5 border-b-2 border-bone/[.26] py-[18px] ${RULE}`}
             >
               {[
-                "CALL-E native",
-                "SOC 2 Type II",
-                "TCPA consent gate on every call",
-                "US · UK · EU numbers",
+                'CALL-E native',
+                'SOC 2 Type II',
+                'TCPA consent gate on every call',
+                'US · UK · EU numbers',
               ].map((item) => (
                 <span key={item} className={KICKER}>
                   {item}
@@ -419,5 +435,18 @@ export default function Home() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <>
+      <div className="hidden md:block">
+        <DesktopLandingPage />
+      </div>
+      <div className="md:hidden">
+        <MobileLandingPage />
+      </div>
+    </>
   );
 }

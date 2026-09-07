@@ -20,10 +20,20 @@ export default async function NewCampaignPage({
 
   const rows = await withRLS(user.id, (tx) =>
     tx
-      .select({ id: workflows.id, goal: workflows.goal })
+      .select({ id: workflows.id, goal: workflows.goal, schema: workflows.schema })
       .from(workflows)
       .orderBy(desc(workflows.updatedAt)),
   );
+  const workflowOptions = rows.map((row) => {
+    const workflow = row.schema as { name?: unknown };
+    return {
+      id: row.id,
+      goal: row.goal,
+      ...(typeof workflow.name === "string" && workflow.name.trim()
+        ? { name: workflow.name }
+        : {}),
+    };
+  });
 
   return (
     <div className="flex min-h-screen flex-col bg-ink">
@@ -56,11 +66,11 @@ export default async function NewCampaignPage({
               every call on the next step.
             </p>
             <NewCampaignForm
-              workflows={rows}
+              workflows={workflowOptions}
               initialWorkflowId={
-                workflowId && rows.some((row) => row.id === workflowId)
+                workflowId && workflowOptions.some((row) => row.id === workflowId)
                   ? workflowId
-                  : rows[0].id
+                  : workflowOptions[0].id
               }
             />
           </>

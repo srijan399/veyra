@@ -198,9 +198,13 @@ def test_live_transfer_language_is_rejected_at_compile_time():
     dispatch time in production. Catching it here, at compile time, is the whole point:
     same failure, much earlier, with an explanation instead of an opaque API error."""
     workflow = SAMPLE_WORKFLOW.model_copy(deep=True)
-    workflow.nodes[-1].say = "Perfect! Connecting you to a licensed advisor now. Please stay on the line."
+    workflow.nodes[
+        -1
+    ].say = "Perfect! Connecting you to a licensed advisor now. Please stay on the line."
     with pytest.raises(UnsupportedCallFeatureError, match="stay on the line"):
-        compile_workflow(workflow, "campaign-1", _contact(), "https://example.com/api/calle/webhook")
+        compile_workflow(
+            workflow, "campaign-1", _contact(), "https://example.com/api/calle/webhook"
+        )
 
 
 @pytest.mark.parametrize(
@@ -217,7 +221,9 @@ def test_each_known_live_transfer_phrase_is_caught(phrase: str) -> None:
     workflow = SAMPLE_WORKFLOW.model_copy(deep=True)
     workflow.nodes[-1].say = phrase
     with pytest.raises(UnsupportedCallFeatureError):
-        compile_workflow(workflow, "campaign-1", _contact(), "https://example.com/api/calle/webhook")
+        compile_workflow(
+            workflow, "campaign-1", _contact(), "https://example.com/api/calle/webhook"
+        )
 
 
 def test_unrelated_use_of_the_word_transfer_is_not_flagged():
@@ -233,7 +239,9 @@ def test_unrelated_use_of_the_word_transfer_is_not_flagged():
 
 def test_a_followup_promise_is_not_flagged():
     workflow = SAMPLE_WORKFLOW.model_copy(deep=True)
-    workflow.nodes[-1].say = "A licensed advisor will review your details and call you back within one business day."
+    workflow.nodes[
+        -1
+    ].say = "A licensed advisor will review your details and call you back within one business day."
     request = compile_workflow(
         workflow, "campaign-1", _contact(), "https://example.com/api/calle/webhook"
     )

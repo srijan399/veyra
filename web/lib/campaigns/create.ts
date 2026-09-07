@@ -47,7 +47,9 @@ export async function compileWorkflowForCampaign(params: {
     contact,
     webhookUrl: calleWebhookUrl(),
   });
-  const name = params.name?.trim() || campaignNameFromGoal(params.workflow.goal);
+  const name =
+    params.name?.trim() ||
+    campaignNameFromGoal(params.workflow.name ?? params.workflow.goal);
   const draft = createSafeDraftFromCompiled(compiled, name, contact, "en-IN");
   return { compiled, name, contact, draft };
 }

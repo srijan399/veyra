@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 
 import { EngineError, generateWorkflow } from "@/lib/engine-client";
+import { campaignNameFromGoal } from "@/lib/campaigns/compile";
 import { workflows } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { requireUser } from "@/lib/supabase/auth";
@@ -29,6 +30,21 @@ export async function POST(request: Request) {
   if (!prompt) {
     return NextResponse.json({ error: "prompt is required" }, { status: 400 });
   }
+  const nameMode = body?.nameMode ?? "ai";
+  if (nameMode !== "ai" && nameMode !== "manual") {
+    return NextResponse.json(
+      { error: 'nameMode must be either "ai" or "manual"' },
+      { status: 400 },
+    );
+  }
+  const requestedName =
+    typeof body?.name === "string" ? body.name.replace(/\s+/g, " ").trim() : "";
+  if (nameMode === "manual" && (requestedName.length < 3 || requestedName.length > 48)) {
+    return NextResponse.json(
+      { error: "A manual workflow name must contain 3 to 48 characters" },
+      { status: 400 },
+    );
+  }
 
   let generated;
   try {
@@ -47,7 +63,14 @@ export async function POST(request: Request) {
   // route (load, edit, compile) will address this workflow by, so it replaces the
   // placeholder rather than living alongside it.
   const workflowId = randomUUID();
-  const workflow: Workflow = { ...generated.workflow, id: workflowId };
+  const workflow: Workflow = {
+    ...generated.workflow,
+    id: workflowId,
+    name:
+      nameMode === "manual"
+        ? requestedName
+        : campaignNameFromGoal(generated.workflow.name ?? generated.workflow.goal),
+  };
 
   let saved;
   try {

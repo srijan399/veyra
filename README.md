@@ -62,13 +62,31 @@ Veyra consists of a **Next.js web application**, **a stateless FastAPI workflow 
 - A local or hosted RabbitMQ broker
 - Optional: CALL-E credentials, required only when placing a real call
 
+Install the web and engine dependencies together from the repository root:
+
+```bash
+corepack enable
+corepack prepare pnpm@11.23.0 --activate
+pnpm install
+```
+
+`pnpm install` runs the root setup script, which installs `web/` packages, creates
+`engine/.venv`, and installs the Python requirements. You can rerun it explicitly with
+`pnpm run setup`.
+
+After configuring both environment files, start the services from separate terminals at
+the repository root:
+
+```bash
+pnpm run:engine
+pnpm run:web
+```
+
 ### 1. Configure the workflow engine
 
 ```bash
 cd engine
-python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
 cp .env.example .env
 ```
 
@@ -94,9 +112,6 @@ Then configure the web application:
 
 ```bash
 cd web
-corepack enable
-corepack prepare pnpm@11.23.0 --activate
-pnpm install
 cp .env.example .env.local
 ```
 

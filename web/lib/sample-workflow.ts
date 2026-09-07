@@ -6,6 +6,7 @@ import type { Workflow } from "@/types/workflow";
  */
 export const SAMPLE_WORKFLOW: Workflow = {
   id: "w1",
+  name: "Wealth Management Qualification",
   goal: "Qualify inbound wealth-management enquiries on goals, horizon and risk tolerance, then book an advisor consultation.",
   nodes: [
     {

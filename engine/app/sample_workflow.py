@@ -9,6 +9,7 @@ from app.models.workflow import Workflow
 SAMPLE_WORKFLOW = Workflow.model_validate(
     {
         "id": "w1",
+        "name": "Wealth Management Qualification",
         "goal": (
             "Qualify inbound wealth-management enquiries on goals, horizon and risk "
             "tolerance, then book an advisor consultation."

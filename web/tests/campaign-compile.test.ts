@@ -113,8 +113,10 @@ test("invalid compiler schemas are stopped before preview or CALL-E", () => {
 
 test("derived campaign names stay inside the persistence boundary", () => {
   const name = campaignNameFromGoal(`  ${"A".repeat(300)}  `);
-  assert.equal(name.length, 116);
-  assert.equal(name.endsWith(" — Draft"), true);
+  assert.equal(name.length, 48);
+  assert.equal(name.endsWith("…"), true);
+  assert.equal(campaignNameFromGoal("  Qualify   wealth leads  "), "Qualify wealth leads");
+  assert.equal(campaignNameFromGoal("  "), "Generated campaign");
 });
 
 test("webhook URL is normalized and rejects non-http origins", async () => {

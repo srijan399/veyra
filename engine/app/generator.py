@@ -49,6 +49,10 @@ _WORKFLOW_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "$defs": {"outcomeField": _OUTCOME_FIELD_SCHEMA},
     "properties": {
+        "name": {
+            "type": "string",
+            "description": "A concise workflow name, no more than six words.",
+        },
         "goal": {
             "type": "string",
             "description": "The overall purpose of the calling process, one sentence.",
@@ -134,7 +138,7 @@ _WORKFLOW_RESPONSE_SCHEMA: dict[str, Any] = {
             "required": ["fields", "nextStep"],
         },
     },
-    "required": ["goal", "nodes", "edges", "qualification", "outcomeSchema"],
+    "required": ["name", "goal", "nodes", "edges", "qualification", "outcomeSchema"],
 }
 
 _SYSTEM_PROMPT = """You are Veyra's workflow generator. Veyra turns a natural-language \
@@ -142,19 +146,20 @@ description of an outbound calling process into a structured, editable conversat
 workflow.
 
 Given the user's prompt, do the following, in order:
-1. Identify the goal of the calling process.
-2. Identify what information needs to be collected from the contact.
-3. Generate a sequence of conversation nodes, including branches for consent, the \
+1. Create a concise workflow name of no more than six words.
+2. Identify the goal of the calling process.
+3. Identify what information needs to be collected from the contact.
+4. Generate a sequence of conversation nodes, including branches for consent, the \
 qualification outcome, and any domain-specific branches the prompt implies (e.g. risk \
 tolerance tiers). Node types are exactly: "start", "question", "decision", "terminal". \
 There must be exactly one "start" node and at least one "terminal" node. Every \
 non-terminal node needs at least one outgoing edge; every id referenced by an edge must \
 exist.
-4. Generate qualification rules scored from the fields the nodes capture, plus a \
+5. Generate qualification rules scored from the fields the nodes capture, plus a \
 threshold.
-5. Generate the outcome schema: the structured data the campaign should return, plus the \
+6. Generate the outcome schema: the structured data the campaign should return, plus the \
 permitted next-step disposition values.
-6. Respond with only the workflow object matching the required schema. Do not include \
+7. Respond with only the workflow object matching the required schema. Do not include \
 x/y layout coordinates or a workflow-level id — the caller assigns those.
 
 CALL-E's Calls API places exactly one adaptive AI conversation per call and cannot \
@@ -183,7 +188,8 @@ You are editing an existing workflow, not creating one from scratch. The user's 
 contains the current workflow as JSON followed by an edit instruction. Apply exactly the \
 requested change and respond with the FULL updated workflow — every node and edge that \
 is not affected by the instruction should be carried over unchanged, including existing \
-ids. Do not regenerate parts of the workflow the instruction did not ask you to change."""
+ids and the workflow name. Do not regenerate parts of the workflow the instruction did \
+not ask you to change."""
 
 _MAX_ATTEMPTS = 2
 

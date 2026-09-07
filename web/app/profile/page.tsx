@@ -15,6 +15,7 @@ const EYEBROW = "text-[10.5px] uppercase tracking-[.14em] text-bone/45";
 
 type SavedWorkflow = {
   id: string;
+  name: string;
   goal: string;
   steps: number;
   compiledCampaignId: string | null;
@@ -82,8 +83,9 @@ function WorkflowCard({ workflow: w }: { workflow: SavedWorkflow }) {
       </div>
 
       <p className="text-[15px] font-extrabold leading-[1.45] tracking-[-.01em] text-bone">
-        {w.goal}
+        {w.name}
       </p>
+      {w.name !== w.goal ? <p className="text-xs leading-5 text-bone/45">{w.goal}</p> : null}
 
       <div className="grid grid-cols-3 gap-2.5 border-t border-bone/[.14] pt-3 text-[11px] text-bone">
         {[
@@ -195,6 +197,7 @@ export default async function ProfilePage() {
 
     return {
       id: row.id,
+      name: workflow.name?.trim() || row.goal,
       goal: row.goal,
       steps: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
       compiledCampaignId: compiledCampaign?.id ?? null,

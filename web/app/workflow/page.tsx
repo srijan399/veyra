@@ -95,7 +95,7 @@ export default async function WorkflowListPage() {
                           href={`/workflow/${row.id}`}
                           className="truncate text-[15px] font-extrabold tracking-[-.01em] text-bone no-underline hover:text-blush"
                         >
-                          {row.goal}
+                          {workflow.name ?? row.goal}
                         </Link>
                       </div>
                     </div>

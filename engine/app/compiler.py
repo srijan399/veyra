@@ -60,12 +60,13 @@ def _assert_no_live_transfer_language(task: str) -> None:
             raise UnsupportedCallFeatureError(
                 'This workflow describes connecting the call to a human live ("'
                 + match.group(0)
-                + '"), which CALL-E\'s Calls API cannot do — it runs one adaptive AI '
+                + "\"), which CALL-E's Calls API cannot do — it runs one adaptive AI "
                 "conversation only, with no in-call handoff to a human. Rephrase this "
                 'step as an asynchronous follow-up instead (for example, "a specialist '
                 'will call you back within one business day") rather than a live '
                 "transfer."
             )
+
 
 # CALL-E's Calls API takes a BCP-47 recipient.locale as a TTS voice *hint*, not a
 # selectable voice id — there is no separate accent/voice parameter (see
@@ -81,7 +82,7 @@ def _assert_no_live_transfer_language(task: str) -> None:
 _LOCALE_LANGUAGE_INSTRUCTIONS: dict[str, str] = {
     "hi-IN": (
         "Language: Conduct this entire call in Hinglish — natural, conversational Hindi "
-        'mixed with English, exactly as commonly spoken in Indian daily conversation. '
+        "mixed with English, exactly as commonly spoken in Indian daily conversation. "
         'Write and speak Hindi words in Roman/Latin script (for example "kya aap abhi '
         'baat kar sakte hain?", "haan", "theek hai", "shukriya"), never Devanagari. Keep '
         "proper nouns, dates, times, numbers, and any technical or schema-specific terms "
@@ -90,7 +91,7 @@ _LOCALE_LANGUAGE_INSTRUCTIONS: dict[str, str] = {
     ),
     "en-IN": (
         "Language: Speak in natural Indian English — the conversational register "
-        'commonly used in Indian professional and customer-service calls (for example '
+        "commonly used in Indian professional and customer-service calls (for example "
         '"kindly", "please share", "I will revert shortly", formal address such as "sir" '
         'or "ma\'am" where it fits naturally). Keep the entire conversation in English; '
         "do not switch to Hindi or mix in other languages."

@@ -5,6 +5,7 @@ import { useState } from "react";
 
 interface WorkflowOption {
   id: string;
+  name?: string;
   goal: string;
 }
 
@@ -69,7 +70,7 @@ export default function NewCampaignForm({
         >
           {workflows.map((workflow) => (
             <option key={workflow.id} value={workflow.id}>
-              {workflow.goal}
+              {workflow.name ?? workflow.goal}
             </option>
           ))}
         </select>

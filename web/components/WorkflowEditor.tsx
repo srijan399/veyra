@@ -84,9 +84,14 @@ export default function WorkflowEditor({
       <div className="flex flex-wrap items-center gap-5 border-b border-bone/[.18] px-[22px] py-3.5">
         <div className="min-w-[220px] flex-1">
           <div className="mb-[3px] text-[10px] uppercase tracking-[.16em] text-ember">
-            Goal
+            Workflow
           </div>
-          <div className="truncate text-[14.5px] text-bone/90">{workflow.goal}</div>
+          <div className="truncate text-[14.5px] font-extrabold text-bone/90">
+            {workflow.name ?? workflow.goal}
+          </div>
+          {workflow.name ? (
+            <div className="mt-1 truncate text-[11px] text-bone/40">{workflow.goal}</div>
+          ) : null}
         </div>
 
         <div className="flex border border-bone/[.26]">

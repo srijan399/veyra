@@ -3,6 +3,7 @@ import { publicCalleWebhookUrl } from "@/lib/calle/webhook-url";
 import type { CalleCallRequest, CampaignLocale, Contact } from "@/types/campaign";
 
 const CAMPAIGN_NAME_MAX = 120;
+const DEFAULT_CAMPAIGN_NAME_MAX = 48;
 const CONTACT_NAME_MAX = 120;
 const CONTACT_METADATA_MAX_FIELDS = 8;
 const CONTACT_METADATA_VALUE_MAX = 160;
@@ -148,8 +149,13 @@ export function createSafeDraftFromCompiled(
 
 export function campaignNameFromGoal(goal: string): string {
   const normalized = goal.replace(/\s+/g, " ").trim();
-  const base = normalized || "Generated calling workflow";
-  return `${base.slice(0, 108)} — Draft`;
+  const base = normalized || "Generated campaign";
+  if (base.length <= DEFAULT_CAMPAIGN_NAME_MAX) return base;
+
+  const clipped = base.slice(0, DEFAULT_CAMPAIGN_NAME_MAX - 1).trimEnd();
+  const lastWordBoundary = clipped.lastIndexOf(" ");
+  const concise = lastWordBoundary >= 24 ? clipped.slice(0, lastWordBoundary) : clipped;
+  return `${concise}…`;
 }
 
 export function calleWebhookUrl(): string {

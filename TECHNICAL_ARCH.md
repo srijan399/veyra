@@ -132,6 +132,7 @@ interface OutcomeSchema {
 
 interface Workflow {
   id: string;                // uuid, matches Supabase row id
+  name?: string;             // short AI-generated or user-supplied display name
   goal: string;              // one to two sentence summary of workflow purpose
   sourcePrompt?: string;     // the original natural language description
   nodes: WorkflowNode[];
