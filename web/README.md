@@ -51,7 +51,9 @@ Workflow and campaign persistence requires the Supabase and `DATABASE_URL` setti
 The campaign screen now persists and independently compiles up to ten unique contacts,
 shows the exact personalized task and schema for each one, and binds one explicit approval
 to the whole immutable batch. Fake mode executes all ten without external requests. Live
-mode deliberately remains limited to one explicitly authorized test recipient.
+mode supports up to ten recipients and requires every recipient to have explicitly
+consented. The exact recipients, personalized tasks, and call count must be reviewed and
+approved before dispatch.
 
 Before submitting, Veyra reserves one durable `call_results` row per contact with the exact
 validated request snapshot and idempotency key. A campaign can be claimed for launch only

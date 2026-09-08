@@ -641,8 +641,8 @@ export default function CampaignBuilder({
                       }
                       className="mt-0.5 size-4 accent-[#ff6a3d]"
                     />
-                    The displayed recipient explicitly authorized this exact
-                    live test call.
+                    Every displayed recipient explicitly authorized the exact
+                    live test call to their number.
                   </label>
                 ) : null}
 
@@ -657,8 +657,8 @@ export default function CampaignBuilder({
                     : preview.mode === 'fake'
                       ? `Run ${preview.callCount} fake call${preview.callCount === 1 ? '' : 's'}`
                       : preview.scheduledAt
-                        ? 'Approve and schedule one live call'
-                        : 'Place one live call'}
+                        ? `Approve and schedule ${preview.callCount} live call${preview.callCount === 1 ? '' : 's'}`
+                        : `Place ${preview.callCount} live call${preview.callCount === 1 ? '' : 's'}`}
                 </button>
               </section>
             ) : null}

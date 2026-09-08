@@ -90,18 +90,26 @@ test("campaign approval is stable and covers every personalized call", async () 
   assert.notEqual(first.preview.approvalDigest, changed.preview.approvalDigest);
 });
 
-test("live campaigns remain limited to one explicitly authorized recipient", async () => {
+test("live campaigns allow up to ten explicitly authorized recipients", async () => {
+  const input = {
+    userId: "user-1",
+    campaignId,
+    mode: "live" as const,
+    locale: "en-IN" as const,
+    scheduledAt: null,
+    calls: contacts.map((contact) => ({ contact, draft: draft(contact) })),
+  };
+  const prepared = await prepareCampaignLaunch(input);
+  assert.equal(prepared.preview.callCount, 2);
+  assert.equal(prepared.preview.recipientAuthorizationRequired, true);
+
   await assert.rejects(
     () =>
       prepareCampaignLaunch({
-        userId: "user-1",
-        campaignId,
-        mode: "live",
-        locale: "en-IN",
-        scheduledAt: null,
-        calls: contacts.map((contact) => ({ contact, draft: draft(contact) })),
+        ...input,
+        calls: Array.from({ length: 11 }, () => input.calls[0]),
       }),
-    /limited to one explicitly authorized test recipient/,
+    /campaign must contain 1 to 10 calls/,
   );
 });
 

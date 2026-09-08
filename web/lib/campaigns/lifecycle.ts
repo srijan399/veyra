@@ -219,12 +219,6 @@ export async function prepareCampaignLaunch(params: {
       `campaign must contain 1 to ${MAX_CAMPAIGN_CONTACTS} calls`,
     ]);
   }
-  if (params.mode === "live" && params.calls.length !== 1) {
-    throw new CampaignLifecycleError([
-      "live mode remains limited to one explicitly authorized test recipient",
-    ]);
-  }
-
   const calls = await Promise.all(
     params.calls.map(async ({ contact, draft }) => {
       const basePreview = await createCallPreview(params.userId, draft, params.mode);
