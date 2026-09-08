@@ -2,7 +2,7 @@ import type { Contact } from "@/types/campaign";
 
 /** Reserved fictional NANP contacts used only when initializing a compiled draft. */
 export const SAMPLE_CONTACTS: Contact[] = [
-  { id: "ct1", name: "Marta Reyes", phoneNumber: "+14155550100" },
+  { id: "ct1", name: "CALL-E Test Hotline", phoneNumber: "+14155550100" },
   { id: "ct2", name: "Daniel Osei", phoneNumber: "+14155550101" },
   { id: "ct3", name: "Priya Raman", phoneNumber: "+14155550102" },
   { id: "ct4", name: "Tom Whitfield", phoneNumber: "+14155550103" },

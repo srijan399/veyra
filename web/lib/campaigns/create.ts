@@ -30,7 +30,7 @@ export async function compileWorkflowForCampaign(params: {
   workflow: Workflow;
   campaignId: string;
   name?: string;
-  /** Defaults to a fictional sample contact — see lib/sample-campaign.ts. */
+  /** Defaults to CALL-E's authorized US testing hotline — see lib/sample-campaign.ts. */
   seedContact?: Omit<Contact, "id">;
 }): Promise<CompiledCampaignDraft> {
   const sample = params.seedContact ?? SAMPLE_CONTACTS[0];

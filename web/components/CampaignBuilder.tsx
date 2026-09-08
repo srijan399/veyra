@@ -523,7 +523,7 @@ export default function CampaignBuilder({
                   setCsv(event.target.value);
                   setCsvFeedback(null);
                 }}
-                placeholder={"Name,Phone\nMarta Reyes,'+14155550100'"}
+                placeholder={"Name,Phone\nCALL-E Test Hotline,+14155550100"}
                 className="min-h-[170px] w-full resize-y border border-bone/[.26] bg-panel p-3.5 font-mono text-[13px] leading-[1.7] text-bone outline-none placeholder:text-bone/25"
               />
               <div className="mt-3 flex items-center gap-3.5">
