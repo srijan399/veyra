@@ -38,6 +38,18 @@ test("contact CSV combines first and last name columns", () => {
   ]);
 });
 
+test("contact CSV permits repeated calls only to the official CALL-E test hotline", () => {
+  assert.deepEqual(
+    parseContactCsv(
+      "Name,Phone\nCALL-E Test Hotline 1,+14155550100\nCALL-E Test Hotline 2,+14155550100",
+    ),
+    [
+      { name: "CALL-E Test Hotline 1", phoneNumber: "+14155550100" },
+      { name: "CALL-E Test Hotline 2", phoneNumber: "+14155550100" },
+    ],
+  );
+});
+
 test("contact CSV rejects malformed and duplicate recipients", () => {
   assert.throws(
     () => parseContactCsv("name,phone\nAsha,9876543210\nSam,+919876543210\nLee,+919876543210"),

@@ -1,3 +1,5 @@
+import { CALLE_TEST_HOTLINE_PHONE } from "@/lib/calle/test-hotline";
+
 export const MAX_CONTACT_CSV_BYTES = 256 * 1024;
 export const MAX_CONTACT_CSV_ROWS = 10;
 
@@ -163,7 +165,7 @@ export function parseContactCsv(
     if (name.length > 120) issues.push(`line ${row.line}: contact name exceeds 120 characters`);
     if (!E164.test(phoneNumber)) {
       issues.push(`line ${row.line}: phone must use E.164 format, for example +919876543210`);
-    } else if (phones.has(phoneNumber)) {
+    } else if (phones.has(phoneNumber) && phoneNumber !== CALLE_TEST_HOTLINE_PHONE) {
       issues.push(`line ${row.line}: phone number duplicates another contact`);
     }
     phones.add(phoneNumber);
