@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { assertLiveOperatorUser } from "@/lib/auth/live-access";
+import { LiveAccessError } from "@/lib/auth/live-policy";
 import { getCallMode, CallConfigurationError } from "@/lib/calle/client";
 import { CallHttpError, readCallJson } from "@/lib/calle/http";
 import {
@@ -18,7 +20,9 @@ export async function POST(request: Request) {
   try {
     const body = await readCallJson(request);
     const draft = parseCallDraft(body);
-    const preview = await createCallPreview(auth.user.id, draft, getCallMode());
+    const mode = getCallMode();
+    await assertLiveOperatorUser(auth.user.id, mode);
+    const preview = await createCallPreview(auth.user.id, draft, mode);
     return NextResponse.json({ preview });
   } catch (error) {
     if (error instanceof CallHttpError) {
@@ -32,6 +36,9 @@ export async function POST(request: Request) {
     }
     if (error instanceof CallConfigurationError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    if (error instanceof LiveAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
     }
     throw error;
   }

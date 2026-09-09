@@ -3,9 +3,18 @@ import { notFound, redirect } from "next/navigation";
 
 import ResultsList from "@/components/ResultsList";
 import StepHeader from "@/components/StepHeader";
+import { assertResultsOperatorRole } from "@/lib/auth/live-policy";
 import { callResults, campaigns, contacts } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { getSessionUser } from "@/lib/supabase/auth";
+import {
+  maskPhoneForDisplay,
+  sanitizeDisplayError,
+  sanitizeFailureCode,
+  sanitizeResultData,
+  sanitizeSummary,
+  sanitizeTranscript,
+} from "@/lib/privacy/redaction";
 import type { CallResult, CallStatus, CampaignStatus, Contact } from "@/types/campaign";
 
 export default async function ResultsByCampaignPage({
@@ -16,6 +25,11 @@ export default async function ResultsByCampaignPage({
   const { id } = await params;
   const user = await getSessionUser();
   if (!user) redirect(`/auth/login?next=/results/${id}`);
+  try {
+    assertResultsOperatorRole(user.role);
+  } catch {
+    redirect("/campaigns");
+  }
 
   const loaded = await withRLS(user.id, async (tx) => {
     const [campaign] = await tx
@@ -61,7 +75,11 @@ export default async function ResultsByCampaignPage({
     return {
       campaign,
       contacts: contactRows.map(
-        (row): Contact => ({ id: row.id, name: row.name, phoneNumber: row.phoneNumber }),
+        (row): Contact => ({
+          id: row.id,
+          name: row.name,
+          phoneNumber: maskPhoneForDisplay(row.phoneNumber),
+        }),
       ),
       results: resultRows.map(
         (row): CallResult => ({
@@ -70,15 +88,12 @@ export default async function ResultsByCampaignPage({
           contactId: row.contactId ?? "",
           ...(row.calleCallId ? { calleCallId: row.calleCallId } : {}),
           qualified: row.qualified,
-          capturedData:
-            row.capturedData && typeof row.capturedData === "object"
-              ? (row.capturedData as Record<string, unknown>)
-              : null,
-          summary: row.summary,
-          ...(row.transcript ? { transcript: row.transcript } : {}),
+          capturedData: sanitizeResultData(row.capturedData),
+          summary: sanitizeSummary(row.summary),
+          ...(row.transcript ? { transcript: sanitizeTranscript(row.transcript) ?? undefined } : {}),
           status: row.status as CallStatus,
-          failureCode: row.failureCode,
-          failureMessage: row.failureMessage,
+          failureCode: sanitizeFailureCode(row.failureCode),
+          failureMessage: sanitizeDisplayError(row.failureMessage),
           ...(row.createdAt ? { createdAt: row.createdAt.toISOString() } : {}),
           ...(row.startedAt ? { startedAt: row.startedAt.toISOString() } : {}),
           ...(row.completedAt ? { completedAt: row.completedAt.toISOString() } : {}),
@@ -97,7 +112,7 @@ export default async function ResultsByCampaignPage({
         campaignName={loaded.campaign.name}
         initialStatus={loaded.campaign.status as CampaignStatus}
         initialScheduledAt={loaded.campaign.scheduledAt?.toISOString() ?? null}
-        initialFailureMessage={loaded.campaign.failureMessage}
+        initialFailureMessage={sanitizeDisplayError(loaded.campaign.failureMessage)}
         contacts={loaded.contacts}
         initialResults={loaded.results}
       />

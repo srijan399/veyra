@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import StepHeader from "@/components/StepHeader";
 import ProfileEditDialog from "@/components/ProfileEditDialog";
 import WorkflowDeleteButton from "@/components/WorkflowDeleteButton";
+import { hasLiveOperatorRole } from "@/lib/auth/live-policy";
 import { callResults, campaigns, workflows } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { initialsFor } from "@/lib/initials";
@@ -158,14 +159,16 @@ export default async function ProfilePage() {
       })
       .from(campaigns)
       .orderBy(desc(campaigns.createdAt));
-    const resultRows = await tx
-      .select({
-        campaignId: callResults.campaignId,
-        calleCallId: callResults.calleCallId,
-        qualified: callResults.qualified,
-        status: callResults.status,
-      })
-      .from(callResults);
+    const resultRows = hasLiveOperatorRole(user.role)
+      ? await tx
+          .select({
+            campaignId: callResults.campaignId,
+            calleCallId: callResults.calleCallId,
+            qualified: callResults.qualified,
+            status: callResults.status,
+          })
+          .from(callResults)
+      : [];
 
     return { workflowRows, campaignRows, resultRows };
   });

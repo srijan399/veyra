@@ -5,7 +5,6 @@ import {
   type SafeCallDraft,
   type SafeCallPreview,
 } from "@/lib/calle/safety";
-import { CALLE_TEST_HOTLINE_PHONE } from "@/lib/calle/test-hotline";
 import type {
   CampaignLocale,
   CampaignLaunchPreview,
@@ -124,7 +123,7 @@ export function parseCampaignPreviewInput(value: unknown): CampaignPreviewInput 
     }
     if (!isE164(phoneNumber)) {
       issues.push(`contacts[${index}].phoneNumber must use strict E.164 format`);
-    } else if (phones.has(phoneNumber) && phoneNumber !== CALLE_TEST_HOTLINE_PHONE) {
+    } else if (phones.has(phoneNumber)) {
       issues.push(`contacts[${index}].phoneNumber duplicates another recipient`);
     }
     phones.add(phoneNumber);

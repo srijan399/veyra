@@ -22,7 +22,8 @@ type Params = { params: Promise<{ id: string }> };
  * therefore locked (see CampaignBuilder's `locked` gate), this is the only way to try
  * again: campaigns are never relaunched in place. The new campaign starts at
  * "compiled", same as any freshly created one, so it goes through preview and approval
- * again rather than silently reusing the old approval.
+ * again rather than silently reusing the old approval. Reconciliation-required campaigns
+ * are excluded because cloning them could duplicate a call whose provider outcome is unknown.
  */
 export async function POST(_request: Request, context: Params) {
   const auth = await requireUser();
@@ -36,6 +37,7 @@ export async function POST(_request: Request, context: Params) {
           name: campaigns.name,
           workflowId: campaigns.workflowId,
           locale: campaigns.locale,
+          status: campaigns.status,
         })
         .from(campaigns)
         .where(eq(campaigns.id, id))
@@ -62,11 +64,21 @@ export async function POST(_request: Request, context: Params) {
         name: campaign.name,
         workflowId: campaign.workflowId,
         locale: campaign.locale,
+        status: campaign.status,
         workflow: workflowRow.schema as Workflow,
         contacts: contactRows,
       };
     });
     if (!loaded) return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
+    if (loaded.status === "reconciliation_required") {
+      return NextResponse.json(
+        {
+          error:
+            "Re-run is blocked until the uncertain CALL-E submission has been reconciled",
+        },
+        { status: 409 },
+      );
+    }
 
     const campaignId = randomUUID();
     const [firstContact] = loaded.contacts;

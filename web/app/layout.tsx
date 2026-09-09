@@ -4,6 +4,7 @@ import './globals.css';
 import { cn } from '@/lib/utils';
 import { UserProvider } from '@/components/UserProvider';
 import { getSessionUser } from '@/lib/supabase/auth';
+import { Analytics } from '@vercel/analytics/next';
 
 const geist = Geist({ subsets: ['latin'], variable: '--font-sans' });
 
@@ -38,6 +39,7 @@ export default async function RootLayout({ children }: LayoutProps<'/'>) {
     >
       <body className="min-h-full flex flex-col font-sans">
         <UserProvider user={user}>{children}</UserProvider>
+        <Analytics />
       </body>
     </html>
   );

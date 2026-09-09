@@ -52,6 +52,7 @@ export type CampaignStatus =
   | "scheduled"
   | "launching"
   | "launched"
+  | "reconciliation_required"
   | "completed"
   | "failed";
 

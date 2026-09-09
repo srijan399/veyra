@@ -1,9 +1,19 @@
 import { asc, eq } from "drizzle-orm";
 
+import { assertResultsOperatorUser } from "@/lib/auth/live-access";
+import { LiveAccessError } from "@/lib/auth/live-policy";
 import { csvCell } from "@/lib/campaigns/csv";
 import { callResults, campaigns, contacts } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { requireUser } from "@/lib/supabase/auth";
+import {
+  maskPhoneForDisplay,
+  sanitizeDisplayError,
+  sanitizeFailureCode,
+  sanitizeResultData,
+  sanitizeSummary,
+  sanitizeTranscript,
+} from "@/lib/privacy/redaction";
 
 export const runtime = "nodejs";
 type Params = { params: Promise<{ id: string }> };
@@ -11,6 +21,14 @@ type Params = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, context: Params) {
   const auth = await requireUser();
   if (!auth.ok) return auth.response;
+  try {
+    await assertResultsOperatorUser(auth.user.id);
+  } catch (error) {
+    if (error instanceof LiveAccessError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
+  }
   const { id } = await context.params;
 
   const loaded = await withRLS(auth.user.id, async (tx) => {
@@ -45,9 +63,18 @@ export async function GET(_request: Request, context: Params) {
 
   if (!loaded) return Response.json({ error: "Campaign not found" }, { status: 404 });
 
+  const sanitizedRows = loaded.rows.map((row) => ({
+    ...row,
+    phoneNumber: maskPhoneForDisplay(row.phoneNumber),
+    capturedData: sanitizeResultData(row.capturedData),
+    summary: sanitizeSummary(row.summary),
+    transcript: sanitizeTranscript(row.transcript),
+    failureMessage: sanitizeDisplayError(row.failureMessage),
+    failureCode: sanitizeFailureCode(row.failureCode),
+  }));
   const resultKeys = Array.from(
     new Set(
-      loaded.rows.flatMap((row) =>
+      sanitizedRows.flatMap((row) =>
         row.capturedData && typeof row.capturedData === "object" && !Array.isArray(row.capturedData)
           ? Object.keys(row.capturedData)
           : [],
@@ -71,7 +98,7 @@ export async function GET(_request: Request, context: Params) {
   ];
   const lines = [
     headers.map(csvCell).join(","),
-    ...loaded.rows.map((row) => {
+    ...sanitizedRows.map((row) => {
       const captured =
         row.capturedData && typeof row.capturedData === "object" && !Array.isArray(row.capturedData)
           ? (row.capturedData as Record<string, unknown>)

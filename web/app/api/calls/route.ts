@@ -1,6 +1,8 @@
 import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 
+import { assertLiveOperatorUser } from "@/lib/auth/live-access";
+import { LiveAccessError } from "@/lib/auth/live-policy";
 import {
   CallConfigurationError,
   executeApprovedCall,
@@ -30,7 +32,9 @@ export async function POST(request: Request) {
     const body = await readCallJson(request);
     const approved = parseApprovedCallRequest(body);
     const { approval, ...draft } = approved;
-    const preview = await createCallPreview(auth.user.id, draft, getCallMode());
+    const mode = getCallMode();
+    await assertLiveOperatorUser(auth.user.id, mode);
+    const preview = await createCallPreview(auth.user.id, draft, mode);
 
     if (!sameDigest(approval.approvalDigest, preview.approvalDigest)) {
       return NextResponse.json(
@@ -69,6 +73,9 @@ export async function POST(request: Request) {
     }
     if (error instanceof CallConfigurationError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    if (error instanceof LiveAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
     }
 
     // Provider errors can contain recipient or task context. Do not echo or log them here.

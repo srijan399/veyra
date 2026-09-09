@@ -350,9 +350,9 @@ Two things about the shape of this function are load-bearing:
 
 - **`role` is not read from metadata.** `raw_user_meta_data` is user-editable — a client
   can update it at any time — so anything read from it is effectively self-assigned. `role`
-  takes the column default `'business_user'`. If Veyra ever grows real roles, they belong
-  in `raw_app_meta_data` or an admin-only write path. Never put an authorization decision
-  behind a `user_metadata` claim.
+  takes the column default `'business_user'`. Live access is assigned only through an
+  administrator-controlled database update to `profiles.role`; never put an authorization
+  decision behind a `user_metadata` claim.
 - **`security definer` with `set search_path = ''`.** The function must write to
   `public.profiles` as its owner, and an empty search path stops a caller-controlled schema
   from shadowing the objects it references.
@@ -363,9 +363,10 @@ RLS is enabled on every table in `public`, because `public` is exposed through t
 API. It is the actual security boundary for user data — not the middleware, and not any
 filter in application code.
 
-- `profiles` — select, insert, update where `(select auth.uid()) = id`. No delete policy:
-  removal happens through the cascade from `auth.users`, and letting a user delete their
-  own profile while their auth user survives leaves a signed-in user with no name.
+- `profiles` — select where `(select auth.uid()) = id`; authenticated users have column-level
+  UPDATE grants only for `full_name`, `company_name`, and `avatar_path`. Profile insertion
+  is reserved for the signup trigger, and `role` is administrator-only. No delete policy:
+  removal happens through the cascade from `auth.users`.
 - `workflows`, `campaigns` — all four verbs where `(select auth.uid()) = user_id`.
 - `contacts` — all four verbs, gated on `exists (select 1 from campaigns c where c.id =
   contacts.campaign_id and c.user_id = (select auth.uid()))`.
@@ -397,6 +398,16 @@ Four conventions apply to every policy, and each one is a trap if ignored:
 Tables created from raw SQL are not necessarily exposed to the Data API, so the schema also
 grants the `authenticated` role explicitly. `anon` is granted nothing. Grants decide whether
 a table is reachable at all; RLS decides which rows come back.
+
+### Live operator entitlement
+
+Authentication and campaign ownership are not permission to spend deployment credentials.
+`web/lib/auth/live-access.ts` requires the exact database role `live_operator` for every
+result read or export. Whenever `CALL_MODE=live`, it also gates preview, launch, scheduling,
+and worker submission. The worker repeats the check immediately before CALL-E submission,
+so revoking the role also stops already queued but not yet submitted work. Fake authoring
+and execution remain available to ordinary `business_user` accounts and never load CALL-E
+credentials, but their result records are not exposed.
 
 ### Drizzle and RLS
 
@@ -626,16 +637,16 @@ rediscovered the hard way.
 
 ### 4.6 Idempotency
 
-Every call creation sends a stable `Idempotency-Key` derived from a durable business
+Every call creation sends a stable `Idempotency-Key` derived from a persisted business
 identifier:
 
 ```
 veyra_{campaignId}_{contactId}
 ```
 
-Never a randomly generated UUID. This key is what lets a retry after a timeout safely
-avoid placing a **duplicate real phone call**, and a fresh random key on every retry
-defeats that entirely.
+Never a randomly generated UUID. It is defense in depth if the provider observes a repeated
+request, but Veyra itself never retries an ambiguous CALL-E submission. A fresh random key
+would defeat the provider's own duplicate protection.
 
 ### 4.7 Metadata
 
@@ -902,13 +913,39 @@ Veyra therefore labels `en-IN` as Indian English without promising a particular 
 Locale and `scheduled_at` are part of the batch approval digest, so either changing after
 preview requires a new approval.
 
-Scheduling is a durable server operation, never a browser timer. Approval moves a campaign
+Scheduling is persisted server-side, never a browser timer. Approval moves a campaign
 from `compiled` to `scheduled`; the bearer-secret-protected `GET /api/cron/campaigns` worker
 loads due rows, recompiles the locked workflow and contacts, compares the stored digest in
 constant time, rechecks all live gates, atomically claims the campaign, and then uses the
 same one-submission dispatch path as immediate launch. A changed digest or expired live
 window fails closed. Vercel Hobby's once-daily cron is too coarse, so scheduling stays
 environment-gated and immediate launch remains the default deployment mode.
+
+### 8.2.2 Dispatch checkpoint and reconciliation
+
+Reservation creates each call row as `pending`. Before a worker invokes CALL-E, it
+recomputes the content-bound approval, verifies the contact, digest, and idempotency key
+against the reserved row, locks the campaign, and atomically changes that row to
+`submitting`. A second contact is deferred while any sibling row remains in that state.
+
+After a successful provider response, the worker checkpoints the CALL-E id and returned
+status before acknowledging RabbitMQ. Redelivery of a checkpointed row is skipped. If the
+same delivery returns while its row is still `submitting`, the process may have crossed
+the provider-acceptance/database-checkpoint gap. Veyra therefore does not invoke CALL-E
+again: it marks that row `submission_uncertain`, moves the campaign to
+`reconciliation_required`, durably cancels every still-pending sibling, and blocks reruns.
+A confirm-channel publish failure pauses and cancels pending work for the same reason.
+
+The consumer uses prefetch one. It acknowledges only durable processed, skipped, or
+quarantined outcomes; transient database/infrastructure failures are requeued. This is a
+safety-first stop state, not automated recovery: an operator must compare the call row's
+idempotency key and provider dashboard before deciding how to resolve the campaign.
+
+There is deliberately no claim of end-to-end exactly-once delivery. Postgres reservation
+and RabbitMQ publication are not one atomic transaction because this reference app has no
+transactional outbox. A process crash between those operations can leave a `pending` row
+without a broker message. The row stays visible and must be reconciled manually; blindly
+republishing it would widen the real-world duplicate-call risk.
 
 ### 8.3 Results Capture (web/app/api/calle/webhook/route.ts)
 
@@ -958,6 +995,13 @@ The campaign and contact rows are matched through `event.data.metadata.campaignI
 
 `structured_result: null` must flow through to Supabase as a null `captured_data` and
 render in the dashboard as "no result extracted", never as a crash or a blank error state.
+
+All provider-controlled result fields cross a privacy boundary before the database write.
+Veyra recursively masks phone numbers, email addresses, credentials, transcript turns,
+summaries, and failure details, with depth and size limits. Result reads and CSV exports
+apply the same sanitizer again for older rows. Application logs retain only safe call
+metadata and status flags; they never include task text, schemas, queue payloads, raw
+provider errors, structured results, summaries, or transcripts.
 
 ### 8.4 Budget Management
 
@@ -1022,6 +1066,7 @@ the normal exact campaign preview.
 ## 11. Environment Variables
 
 ENGINE_URL=              # base URL of engine/, defaults to http://localhost:8008
+ENGINE_ALLOWED_ORIGINS=  # exact approved HTTPS origins for a remote engine
 ENGINE_SHARED_SECRET=    # optional, only if the engine has its own set
 DATABASE_URL=            # direct Postgres connection, the `postgres` role specifically — see "Drizzle and RLS"
 CALLE_API_KEY=
@@ -1036,6 +1081,10 @@ CRON_SECRET=                       # bearer secret for /api/cron/campaigns
 `engine/` has its own `GEMINI_API_KEY` / `GEMINI_MODEL` / `ENGINE_SHARED_SECRET` in
 `engine/.env.example` — it is a separate service with its own env file, not a section of
 this app's `web/.env.local`.
+
+`ENGINE_URL` is resolved before any request body or `ENGINE_SHARED_SECRET` is attached.
+Loopback localhost origins are accepted for development; every remote engine must use HTTPS
+and exactly match an origin in `ENGINE_ALLOWED_ORIGINS`.
 
 The browser key is `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, not `..._ANON_KEY` — that is
 what `web/lib/supabase/{client,server,middleware}.ts` read, and it is Supabase's current name

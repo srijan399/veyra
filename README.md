@@ -27,7 +27,7 @@ Both are **slow** and **do not scale well**:
 - Manual call teams are **expensive**, **inconsistent**, and **difficult** to **scale** quickly.
 - Hand-built voice agents **require an AI engineer** to translate each process into prompts, conversation states, and branching logic and repeat that work whenever it changes.
 
-There is no direct path from **_“here is our calling process”_** to a **working, structured, production-ready voice agent.**
+There is no direct path from **_“here is our calling process”_** to a **working, structured, deployable voice workflow.**
 
 ## Our Proposed Solution
 
@@ -92,7 +92,7 @@ cp .env.example .env
 
 Set `GEMINI_API_KEY` in `engine/.env`. `GEMINI_MODEL` can normally keep its default.
 
-To protect a deployed engine, set `ENGINE_SHARED_SECRET` to a random value and use the same value in the web application's environment.
+To protect a deployed engine, set `ENGINE_SHARED_SECRET` to a random value and use the same value in the web application's environment. Remote engines must use HTTPS and their exact origin must also be listed in the web application's `ENGINE_ALLOWED_ORIGINS`; loopback localhost URLs are trusted automatically for development.
 
 Start the engine:
 
@@ -119,6 +119,7 @@ Fill in these required values in `web/.env.local`:
 
 ```env
 ENGINE_URL=http://localhost:8008
+ENGINE_ALLOWED_ORIGINS=
 ENGINE_SHARED_SECRET=
 APP_URL=http://localhost:3000
 
@@ -182,17 +183,34 @@ CALLE_API_KEY=<CALL-E API key>
 CALLE_BASE_URL=https://api.heycall-e.com
 APP_URL=https://<public-web-app-domain>
 CALLE_WEBHOOK_TOKEN=<at-least-32-random-characters>
+ENGINE_URL=https://<engine-domain>
+ENGINE_ALLOWED_ORIGINS=https://<engine-domain>
 ```
 
 `APP_URL` is the public frontend URL because CALL-E posts results to `<APP_URL>/api/calle/webhook`.
+
+Every new account has the non-privileged `business_user` role. Before a specific operator can view results or preview, launch, and schedule live calls, assign the entitlement from the Supabase SQL editor using the exact authenticated user UUID:
+
+```sql
+update public.profiles
+set role = 'live_operator'
+where id = '<authorized-auth-user-uuid>';
+```
+
+Only the signup trigger can create profiles and only a database administrator can change this field; authenticated users retain update access only to their name, company, and avatar. Remove live access by setting the role back to `business_user`.
 
 Preview the exact campaign and confirm recipient permission before launching. Veyra does not automatically retry an uncertain submission.
 
 ### Safety and stopping calls
 
 - Fake mode is the default and cannot place a real call, even when a CALL-E key is present.
+- Ordinary signups cannot access results in any mode or preview, launch, or schedule live calls; an administrator must explicitly assign `live_operator`.
 - Every live recipient must use E.164 format and be explicitly authorized as part of the exact campaign preview. Logs and previews mask phone numbers.
-- A campaign can be claimed for launch only once, and every call carries a stable idempotency key. Duplicate contacts are rejected except for the explicitly labelled CALL-E testing-hotline fixture.
+- CALL-E output is deeply sanitized before persistence and again before display or CSV export; raw tasks, transcripts, structured results, provider errors, and queue payloads are excluded from logs.
+- A campaign can be claimed for launch only once, every call carries a stable idempotency key, and duplicate contacts are always rejected.
+- Each queued call must atomically claim its reserved result row. A redelivery can never re-enter CALL-E while that row is already submitting or finished.
+- An ambiguous CALL-E or RabbitMQ submission moves the campaign to `reconciliation_required`; not-yet-started contacts are durably canceled, and reruns and workflow deletion remain blocked until an operator reconciles the provider outcome.
+- This reference app does not claim end-to-end exactly-once delivery: there is no transactional database-to-RabbitMQ outbox, so a process crash after reservation but before broker confirmation can leave visible `pending` rows that require operator reconciliation.
 - Launching a live campaign queues real-world side effects: recipients may be called and CALL-E credits may be consumed. Veyra cannot cancel a call after the worker submits it.
 - To stop future live submissions, stop the dispatch worker and set `CALL_MODE=fake` and `CALLE_LIVE_ENABLED=false` before restarting it. Stopping the worker pauses queued jobs; it does not delete them.
 - Disable `CAMPAIGN_SCHEDULING_ENABLED` to stop scheduled campaigns from becoming newly due. Veyra never creates hidden recurring schedules and never automatically retries an uncertain provider submission.
@@ -215,7 +233,7 @@ flowchart TD
     G --> E
     E --> W
     W --> D["Supabase Postgres<br/>workflows, campaigns, <br /> results"]
-    W --> Q["RabbitMQ<br/>one durable job per call"]
+    W --> Q["RabbitMQ<br/>confirmed persistent job per call"]
     Q --> K["Dispatch worker"]
     K --> C["CALL-E Calls API"]
     C --> P["Real phone conversation"]

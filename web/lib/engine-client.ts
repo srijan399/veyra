@@ -11,9 +11,8 @@
 
 import type { Workflow } from "@/types/workflow";
 import type { CalleCallRequest, CampaignLocale, Contact } from "@/types/campaign";
-
-const ENGINE_URL = process.env.ENGINE_URL ?? "http://localhost:8008";
-const ENGINE_SHARED_SECRET = process.env.ENGINE_SHARED_SECRET;
+import { EngineOriginError, resolveEngineUrl } from "@/lib/engine-origin";
+import { redactSensitiveText } from "@/lib/privacy/redaction";
 
 export class EngineError extends Error {
   constructor(
@@ -36,17 +35,17 @@ export class EngineError extends Error {
  * text rather than swallowing information.
  */
 function engineErrorMessage(text: string, fallback: string): string {
-  if (!text) return fallback;
+  if (!text) return redactSensitiveText(fallback, 2_000);
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return text;
+    return redactSensitiveText(text, 2_000);
   }
-  if (typeof parsed !== "object" || parsed === null) return text;
+  if (typeof parsed !== "object" || parsed === null) return redactSensitiveText(text, 2_000);
   const detail = (parsed as Record<string, unknown>).detail;
 
-  if (typeof detail === "string") return detail;
+  if (typeof detail === "string") return redactSensitiveText(detail, 2_000);
 
   if (Array.isArray(detail)) {
     const messages = detail
@@ -56,7 +55,7 @@ function engineErrorMessage(text: string, fallback: string): string {
           : null,
       )
       .filter((message): message is string => message !== null);
-    if (messages.length) return messages.join("; ");
+    if (messages.length) return redactSensitiveText(messages.join("; "), 2_000);
   }
 
   if (typeof detail === "object" && detail !== null) {
@@ -65,25 +64,35 @@ function engineErrorMessage(text: string, fallback: string): string {
     const issues = Array.isArray(errors)
       ? errors.filter((error): error is string => typeof error === "string")
       : [];
-    return issues.length ? `${summary}: ${issues.join("; ")}` : summary;
+    return redactSensitiveText(issues.length ? `${summary}: ${issues.join("; ")}` : summary, 2_000);
   }
 
-  return text;
+  return redactSensitiveText(text, 2_000);
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
+  let engineUrl: string;
+  try {
+    engineUrl = resolveEngineUrl();
+  } catch (error) {
+    throw new EngineError(
+      503,
+      error instanceof EngineOriginError ? error.message : "Workflow engine origin is invalid",
+    );
+  }
+  const sharedSecret = process.env.ENGINE_SHARED_SECRET;
   let response: Response;
   try {
-    response = await fetch(`${ENGINE_URL}${path}`, {
+    response = await fetch(`${engineUrl}${path}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(ENGINE_SHARED_SECRET ? { authorization: `Bearer ${ENGINE_SHARED_SECRET}` } : {}),
+        ...(sharedSecret ? { authorization: `Bearer ${sharedSecret}` } : {}),
       },
       body: JSON.stringify(body),
     });
   } catch {
-    throw new EngineError(503, `Could not reach the workflow engine at ${ENGINE_URL}`);
+    throw new EngineError(503, "Could not reach the configured workflow engine");
   }
 
   const text = await response.text();

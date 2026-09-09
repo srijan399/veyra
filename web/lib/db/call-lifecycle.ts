@@ -1,11 +1,20 @@
 import "server-only";
 
-import { and, asc, eq, isNull, lte, or } from "drizzle-orm";
+import { and, asc, eq, isNull, lte, ne, or } from "drizzle-orm";
 
 import type { SafeCallExecution } from "@/lib/calle/client";
 import type { PreparedCampaignCall } from "@/lib/campaigns/lifecycle";
 import type { ParsedWebhookEvent } from "@/lib/calle/webhook-event";
+import { dispatchClaimAction, type DispatchClaimAction } from "@/lib/campaigns/dispatch-state";
 import type { CallStatus, CampaignStatus } from "@/types/campaign";
+import {
+  publicProviderFailureMessage,
+  sanitizeDisplayError,
+  sanitizeFailureCode,
+  sanitizeResultData,
+  sanitizeSummary,
+  sanitizeTranscript,
+} from "@/lib/privacy/redaction";
 
 import { getDb } from "./client";
 import { callResults, campaigns, processedWebhookEvents } from "./schema";
@@ -27,13 +36,39 @@ function executionStatus(status: string): CallStatus {
   if (["queued", "in_progress", "completed", "failed", "canceled"].includes(status)) {
     return status as CallStatus;
   }
-  return "submission_uncertain";
+  return "queued";
+}
+
+const RECONCILIATION_MESSAGE =
+  "Dispatch paused because CALL-E may have accepted a call. Reconcile it in the provider dashboard before taking further action.";
+const PAUSED_CALL_MESSAGE =
+  "The call was not submitted because an earlier campaign submission requires reconciliation.";
+
+async function cancelPendingCallsTx(
+  tx: Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0],
+  campaignId: string,
+): Promise<void> {
+  await tx
+    .update(callResults)
+    .set({
+      status: "canceled",
+      failureCode: "campaign_paused",
+      failureMessage: PAUSED_CALL_MESSAGE,
+      completedAt: new Date(),
+    })
+    .where(and(eq(callResults.campaignId, campaignId), eq(callResults.status, "pending")));
 }
 
 async function refreshCampaignStatusTx(
   tx: Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0],
   campaignId: string,
 ): Promise<CampaignStatus> {
+  const [campaign] = await tx
+    .select({ status: campaigns.status })
+    .from(campaigns)
+    .where(eq(campaigns.id, campaignId))
+    .limit(1);
+  if (campaign?.status === "reconciliation_required") return "reconciliation_required";
   const rows = await tx
     .select({ status: callResults.status })
     .from(callResults)
@@ -89,12 +124,158 @@ export async function reserveCampaignRuns(params: {
         contactId: call.contact.id,
         idempotencyKey: call.preview.idempotencyKey,
         approvalDigest: call.preview.approvalDigest,
-        compiledRequest: call.draft,
-        status: "submitting",
+        compiledRequest: sanitizeResultData(call.draft),
+        status: "pending",
         createdAt: now,
       })),
     );
     return "reserved";
+  });
+}
+
+export async function claimCallDispatch(params: {
+  userId: string;
+  campaignId: string;
+  callResultId: string;
+  contactId: string;
+  approvalDigest: string;
+  idempotencyKey: string;
+}): Promise<DispatchClaimAction> {
+  return getDb().transaction(async (tx) => {
+    const [campaign] = await tx
+      .select({ status: campaigns.status })
+      .from(campaigns)
+      .where(and(eq(campaigns.id, params.campaignId), eq(campaigns.userId, params.userId)))
+      .for("update")
+      .limit(1);
+    if (!campaign) throw new Error("Campaign is unavailable for dispatch");
+
+    const [call] = await tx
+      .select({
+        status: callResults.status,
+        contactId: callResults.contactId,
+        approvalDigest: callResults.approvalDigest,
+        idempotencyKey: callResults.idempotencyKey,
+      })
+      .from(callResults)
+      .where(
+        and(
+          eq(callResults.id, params.callResultId),
+          eq(callResults.campaignId, params.campaignId),
+        ),
+      )
+      .limit(1);
+    if (!call) throw new Error("Call run is unavailable for dispatch");
+    if (
+      params.contactId !== call.contactId ||
+      params.approvalDigest !== call.approvalDigest ||
+      params.idempotencyKey !== call.idempotencyKey
+    ) {
+      await tx
+        .update(callResults)
+        .set({
+          status: "failed",
+          failureCode: "queue_job_mismatch",
+          failureMessage: "The queued call did not match its reserved approval.",
+          completedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(callResults.id, params.callResultId),
+            eq(callResults.campaignId, params.campaignId),
+            eq(callResults.status, "pending"),
+          ),
+        );
+      await refreshCampaignStatusTx(tx, params.campaignId);
+      return "skip";
+    }
+
+    const [anotherSubmitting] =
+      call.status === "pending"
+        ? await tx
+            .select({ id: callResults.id })
+            .from(callResults)
+            .where(
+              and(
+                eq(callResults.campaignId, params.campaignId),
+                eq(callResults.status, "submitting"),
+                ne(callResults.id, params.callResultId),
+              ),
+            )
+            .limit(1)
+        : [];
+    const action = dispatchClaimAction({
+      campaignStatus: campaign.status,
+      callStatus: call.status,
+      anotherCallSubmitting: Boolean(anotherSubmitting),
+    });
+
+    if (action === "claim") {
+      const [claimed] = await tx
+        .update(callResults)
+        .set({ status: "submitting", startedAt: new Date() })
+        .where(
+          and(
+            eq(callResults.id, params.callResultId),
+            eq(callResults.campaignId, params.campaignId),
+            eq(callResults.status, "pending"),
+          ),
+        )
+        .returning({ id: callResults.id });
+      return claimed ? "claim" : "defer";
+    }
+
+    // A redelivered job whose own row is still "submitting" crossed the unsafe
+    // provider-acceptance/checkpoint gap. Never call create again: quarantine the
+    // run and stop every later contact in this campaign.
+    if (action === "require_reconciliation" && call.status === "submitting") {
+      await tx
+        .update(callResults)
+        .set({
+          status: "submission_uncertain",
+          failureCode: "submission_checkpoint_missing",
+          failureMessage: publicProviderFailureMessage(),
+          completedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(callResults.id, params.callResultId),
+            eq(callResults.campaignId, params.campaignId),
+            eq(callResults.status, "submitting"),
+          ),
+        );
+      await tx
+        .update(campaigns)
+        .set({ status: "reconciliation_required", failureMessage: RECONCILIATION_MESSAGE })
+        .where(eq(campaigns.id, params.campaignId));
+      await cancelPendingCallsTx(tx, params.campaignId);
+    }
+    return action;
+  });
+}
+
+export async function pauseCampaignForReconciliation(params: {
+  userId: string;
+  campaignId: string;
+}): Promise<void> {
+  await getDb().transaction(async (tx) => {
+    const [campaign] = await tx
+      .select({ id: campaigns.id })
+      .from(campaigns)
+      .where(and(eq(campaigns.id, params.campaignId), eq(campaigns.userId, params.userId)))
+      .for("update")
+      .limit(1);
+    if (!campaign) throw new Error("Campaign is unavailable for reconciliation");
+    await tx
+      .update(campaigns)
+      .set({ status: "reconciliation_required", failureMessage: RECONCILIATION_MESSAGE })
+      .where(
+        and(
+          eq(campaigns.id, params.campaignId),
+          or(eq(campaigns.status, "launching"), eq(campaigns.status, "launched")),
+        ),
+      );
+    await cancelPendingCallsTx(tx, params.campaignId);
   });
 }
 
@@ -144,11 +325,15 @@ export async function dueScheduledCampaigns(limit = 5): Promise<
 
 export async function failScheduledCampaign(params: {
   campaignId: string;
-  message: string;
+  message?: string;
 }): Promise<void> {
   await getDb()
     .update(campaigns)
-    .set({ status: "failed", failureMessage: params.message.slice(0, 500) })
+    .set({
+      status: "failed",
+      failureMessage:
+        sanitizeDisplayError(params.message) ?? "Scheduled dispatch stopped safely before calling.",
+    })
     .where(and(eq(campaigns.id, params.campaignId), eq(campaigns.status, "scheduled")));
 }
 
@@ -159,19 +344,26 @@ export async function recordCallSubmission(params: {
 }): Promise<void> {
   const status = executionStatus(params.execution.status);
   const completedAt = TERMINAL.has(status) ? new Date() : null;
+  const capturedData = sanitizeResultData(params.execution.structuredResult);
   await getDb().transaction(async (tx) => {
+    await tx
+      .select({ id: campaigns.id })
+      .from(campaigns)
+      .where(eq(campaigns.id, params.campaignId))
+      .for("update")
+      .limit(1);
     await tx
       .update(callResults)
       .set({
         calleCallId: params.execution.callId,
         status,
-        capturedData: params.execution.structuredResult,
+        capturedData,
         qualified:
           params.execution.qualified !== undefined
             ? params.execution.qualified
-            : qualified(params.execution.structuredResult),
-        summary: params.execution.summary ?? null,
-        transcript: params.execution.transcript ?? null,
+            : qualified(capturedData),
+        summary: sanitizeSummary(params.execution.summary),
+        transcript: sanitizeTranscript(params.execution.transcript),
         startedAt: new Date(),
         completedAt,
       })
@@ -179,6 +371,7 @@ export async function recordCallSubmission(params: {
         and(
           eq(callResults.id, params.callResultId),
           eq(callResults.campaignId, params.campaignId),
+          eq(callResults.status, "submitting"),
         ),
       );
     await refreshCampaignStatusTx(tx, params.campaignId);
@@ -188,27 +381,64 @@ export async function recordCallSubmission(params: {
 export async function recordSubmissionFailure(params: {
   campaignId: string;
   callResultId: string;
-  /** The caught error's own message — see processCallDispatchJob in lib/campaigns/dispatch.ts. */
-  reason: string;
   /** Defaults to a generic submission error; pass a more specific code when known. */
   code?: string;
 }): Promise<void> {
-  const failureMessage =
-    `${params.reason} — CALL-E did not confirm whether it accepted this call; ` +
-    "no automatic retry was attempted.";
   await getDb().transaction(async (tx) => {
+    await tx
+      .select({ id: campaigns.id })
+      .from(campaigns)
+      .where(eq(campaigns.id, params.campaignId))
+      .for("update")
+      .limit(1);
     await tx
       .update(callResults)
       .set({
         status: "submission_uncertain",
         failureCode: params.code ?? "submission_error",
-        failureMessage: failureMessage.slice(0, 500),
+        failureMessage: publicProviderFailureMessage(),
         completedAt: new Date(),
       })
       .where(
         and(
           eq(callResults.id, params.callResultId),
           eq(callResults.campaignId, params.campaignId),
+          eq(callResults.status, "submitting"),
+        ),
+      );
+    await tx
+      .update(campaigns)
+      .set({ status: "reconciliation_required", failureMessage: RECONCILIATION_MESSAGE })
+      .where(eq(campaigns.id, params.campaignId));
+    await cancelPendingCallsTx(tx, params.campaignId);
+  });
+}
+
+export async function recordPreSubmissionFailure(params: {
+  campaignId: string;
+  callResultId: string;
+  code: "authorization_error" | "configuration_error";
+}): Promise<void> {
+  await getDb().transaction(async (tx) => {
+    await tx
+      .select({ id: campaigns.id })
+      .from(campaigns)
+      .where(eq(campaigns.id, params.campaignId))
+      .for("update")
+      .limit(1);
+    await tx
+      .update(callResults)
+      .set({
+        status: "failed",
+        failureCode: params.code,
+        failureMessage: "The call was stopped before submission by a safety check.",
+        completedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(callResults.id, params.callResultId),
+          eq(callResults.campaignId, params.campaignId),
+          or(eq(callResults.status, "pending"), eq(callResults.status, "submitting")),
         ),
       );
     await refreshCampaignStatusTx(tx, params.campaignId);
@@ -218,6 +448,7 @@ export async function recordSubmissionFailure(params: {
 export async function recordWebhookEvent(
   event: ParsedWebhookEvent,
 ): Promise<"processed" | "duplicate"> {
+  const capturedData = sanitizeResultData(event.call.capturedData);
   return getDb().transaction(async (tx) => {
     const [inserted] = await tx
       .insert(processedWebhookEvents)
@@ -226,17 +457,24 @@ export async function recordWebhookEvent(
       .returning({ eventId: processedWebhookEvents.eventId });
     if (!inserted) return "duplicate";
 
+    await tx
+      .select({ id: campaigns.id })
+      .from(campaigns)
+      .where(eq(campaigns.id, event.call.campaignId))
+      .for("update")
+      .limit(1);
+
     const [updated] = await tx
       .update(callResults)
       .set({
         calleCallId: event.call.id,
         qualified: event.call.qualified,
-        capturedData: event.call.capturedData,
-        summary: event.call.summary,
-        transcript: event.call.transcript,
+        capturedData,
+        summary: sanitizeSummary(event.call.summary),
+        transcript: sanitizeTranscript(event.call.transcript),
         status: event.call.status,
-        failureCode: event.call.failureCode,
-        failureMessage: event.call.failureMessage,
+        failureCode: sanitizeFailureCode(event.call.failureCode),
+        failureMessage: event.call.failureMessage ? publicProviderFailureMessage() : null,
         completedAt: event.call.completedAt,
       })
       .where(

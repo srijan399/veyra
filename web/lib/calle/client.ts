@@ -200,8 +200,6 @@ export async function executeApprovedCall(
     `[calle] → calls.create phone=${maskPhone(draft.phone)} locale=${draft.locale} ` +
       `idempotencyKey=${preview.idempotencyKey} taskChars=${draft.task.length} hasWebhook=${hasWebhook}`,
   );
-  console.log(`[calle] → task text:\n${draft.task}`);
-  console.log(`[calle] → result schema: ${JSON.stringify(draft.resultSchema)}`);
 
   // Keep fake mode entirely credential-free and side-effect-free. The official SDK is
   // not loaded until every live gate above has passed.
@@ -213,14 +211,8 @@ export async function executeApprovedCall(
     `[calle] ← calls.create responded callId=${call.id} status=${call.status} ` +
       `taskCompleted=${call.taskCompleted ?? "n/a"} confidence=${call.completionConfidence?.label ?? "n/a"} ` +
       `structuredResult=${call.structuredResult ? "present" : "null"} ` +
-      `failureCode=${call.failureCode ?? "none"} failureMessage=${call.failureMessage ?? "none"}`,
+      `failure=${call.failureCode ? "present" : "none"}`,
   );
-  if (call.structuredResult) {
-    console.log(`[calle] ← structured result: ${JSON.stringify(call.structuredResult)}`);
-  }
-  if (call.summary) {
-    console.log(`[calle] ← summary: ${call.summary}`);
-  }
 
   return {
     mode: "live",

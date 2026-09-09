@@ -7,7 +7,12 @@ import { requireUser } from "@/lib/supabase/auth";
 import type { Workflow } from "@/types/workflow";
 
 type Params = { params: Promise<{ id: string }> };
-const ACTIVE_CAMPAIGN_STATUSES = ["scheduled", "launching", "launched"];
+const ACTIVE_CAMPAIGN_STATUSES = [
+  "scheduled",
+  "launching",
+  "launched",
+  "reconciliation_required",
+];
 
 /**
  * Load one workflow. RLS (`workflows_select_own`) is what actually enforces that the

@@ -4,9 +4,17 @@ import { notFound, redirect } from "next/navigation";
 
 import CallInFlight from "@/components/CallInFlight";
 import StepHeader from "@/components/StepHeader";
+import { assertResultsOperatorRole } from "@/lib/auth/live-policy";
 import { callResults, campaigns, contacts } from "@/lib/db/schema";
 import { withRLS } from "@/lib/db/with-rls";
 import { getSessionUser } from "@/lib/supabase/auth";
+import {
+  maskPhoneForDisplay,
+  sanitizeDisplayError,
+  sanitizeResultData,
+  sanitizeSummary,
+  sanitizeTranscript,
+} from "@/lib/privacy/redaction";
 import type { CallStatus } from "@/types/campaign";
 
 const KICKER = "text-[10.5px] uppercase tracking-[.14em] text-bone/50";
@@ -24,6 +32,11 @@ export default async function ResultDetailPage({
   const { id, contactId } = await params;
   const user = await getSessionUser();
   if (!user) redirect(`/auth/login?next=/results/${id}/${contactId}`);
+  try {
+    assertResultsOperatorRole(user.role);
+  } catch {
+    redirect("/campaigns");
+  }
 
   const loaded = await withRLS(user.id, async (tx) => {
     const [campaign] = await tx
@@ -75,7 +88,9 @@ export default async function ResultDetailPage({
           <h1 className="mb-2 text-4xl font-extrabold leading-[1.08] tracking-[-.02em]">
             {contact.name}
           </h1>
-          <p className="mb-8 font-mono text-sm text-bone/45">{contact.phoneNumber}</p>
+          <p className="mb-8 font-mono text-sm text-bone/45">
+            {maskPhoneForDisplay(contact.phoneNumber)}
+          </p>
 
           {!result ? (
             <div className="border border-bone/[.18] p-4 text-sm text-bone/45">
@@ -106,7 +121,9 @@ export default async function ResultDetailPage({
               </div>
 
               {result.summary ? (
-                <p className="mb-6 text-sm leading-6 text-bone/70">{result.summary}</p>
+                <p className="mb-6 text-sm leading-6 text-bone/70">
+                  {sanitizeSummary(result.summary)}
+                </p>
               ) : null}
 
               {result.failureMessage ? (
@@ -114,20 +131,20 @@ export default async function ResultDetailPage({
                   role="alert"
                   className="mb-6 border border-red-400/50 bg-red-950/30 p-3 text-sm text-red-200"
                 >
-                  {result.failureMessage}
+                  {sanitizeDisplayError(result.failureMessage)}
                 </div>
               ) : null}
 
               <div className={`${KICKER} mb-2`}>Structured result</div>
               <pre className="mb-6 overflow-auto bg-panel p-3 text-xs text-bone/65">
-                {JSON.stringify(result.capturedData, null, 2)}
+                {JSON.stringify(sanitizeResultData(result.capturedData), null, 2)}
               </pre>
 
               {result.transcript ? (
                 <>
                   <div className={`${KICKER} mb-2`}>Transcript</div>
                   <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap bg-panel p-3 text-xs leading-5 text-bone/65">
-                    {result.transcript}
+                    {sanitizeTranscript(result.transcript)}
                   </pre>
                 </>
               ) : null}

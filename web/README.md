@@ -12,6 +12,11 @@ recipient, task, schema, metadata, or authenticated user invalidates the approva
 Fake mode is the default even if `CALLE_API_KEY` exists. It performs no network request,
 places no phone call, and consumes no CALL-E credit.
 
+Only profiles assigned the administrator-controlled `live_operator` role can read or
+export results. The same role is required to preview, launch, or schedule in live mode.
+Ordinary signups remain `business_user`. Migration `0005_live_operator_entitlement.sql` prevents authenticated
+profile creation and role changes while preserving edits to presentation fields.
+
 ```bash
 pnpm install
 pnpm demo
@@ -21,7 +26,7 @@ pnpm test
 `pnpm demo` is credential-free and uses the fictional reserved number `+14155550100`. Its
 output must report `realCallsPlaced: 0`.
 
-### Phase 2: workflow compiler and durable campaign
+### Phase 2: workflow compiler and persisted campaign
 
 The workflow editor's **Compile to Call** action now sends the current edited graph to
 the credential-free Python engine. The engine validates the graph, prepends mandatory AI
@@ -46,7 +51,7 @@ pnpm dev
 Workflow and campaign persistence requires the Supabase and `DATABASE_URL` settings in
 `.env.local`. Compilation itself never receives `CALLE_API_KEY` and cannot place a call.
 
-### Phase 3: durable campaign execution and results
+### Phase 3: campaign execution and persisted results
 
 The campaign screen now persists and independently compiles up to ten unique contacts,
 shows the exact personalized task and schema for each one, and binds one explicit approval
@@ -57,14 +62,34 @@ approved before dispatch.
 
 Before submitting, Veyra reserves one durable `call_results` row per contact with the exact
 validated request snapshot and idempotency key. A campaign can be claimed for launch only
-once. Provider ambiguity becomes `submission_uncertain` and is never retried automatically.
+once. The worker recomputes each queued approval, binds it to that reserved row, and
+atomically claims `pending -> submitting` before CALL-E. Only one provider submission per
+campaign may be unresolved at a time.
+
+RabbitMQ redelivery after a completed checkpoint is skipped. Redelivery while the same row
+is still `submitting` is treated as an ambiguous provider-acceptance gap: Veyra never calls
+create again, marks the run `submission_uncertain`, moves the campaign to
+`reconciliation_required`, and blocks later queued contacts, workflow deletion, and rerun.
+Every still-pending sibling row is durably canceled, so continuing requires a fresh
+approval after reconciliation. Queue-confirm ambiguity uses the same campaign pause.
+Infrastructure failures before a durable decision are requeued; malformed messages are
+discarded without logging payloads.
+
+This is a safety-first reference implementation, not an end-to-end exactly-once system.
+There is no transactional outbox spanning Postgres reservation and RabbitMQ publication.
+A process crash after reservation but before broker confirmation can therefore leave
+`pending` rows with no queued job. They remain visible for operator reconciliation rather
+than being automatically replayed into a possible real-world side effect.
 
 Current CALL-E webhooks are unsigned. Veyra therefore adds a secret token to the per-call
 delivery URL, requires `CALL-E-Event-Id` to match the body event id, verifies UUID correlation
 metadata, and atomically deduplicates every event before updating its call result. Terminal
-webhooks persist structured results, qualification, summary, failures, and a readable
-transcript. The campaign screen polls an RLS-protected results endpoint until every run is
-terminal.
+webhooks deeply redact phone numbers, email addresses, credential-like fields, nested
+structured output, summaries, transcripts, and provider failures before persistence.
+Result APIs, pages, and spreadsheet-safe CSV exports sanitize those fields again before
+output. Provider payloads, transcripts, task text, and raw queue messages are never written
+to application logs. The campaign screen polls an RLS-protected results endpoint until
+every run is terminal.
 
 Apply the Phase 3 database migration before using launch or results:
 
@@ -145,8 +170,8 @@ pnpm db:migrate
 - `POST /api/campaigns/[id]/preview` validates, saves, and compiles 1–10 contacts and
   returns one batch approval preview.
 - `POST /api/campaigns/[id]/launch` recompiles the saved campaign, verifies the exact
-  approval, reserves durable runs, and submits each call once.
-- `GET /api/campaigns/[id]/results` returns the owned campaign status and durable results.
+  approval, reserves durable runs, and queues each live call with confirmation.
+- `GET /api/campaigns/[id]/results` returns the owned campaign status and persisted results.
 - `GET /api/campaigns/[id]/results/export` downloads owned results as safe CSV.
 - `GET /api/cron/campaigns` dispatches due approved schedules with `CRON_SECRET`.
 - `GET /api/health` checks the deployed web-to-engine connection without exposing secrets.
@@ -159,8 +184,9 @@ All user-facing campaign and call routes require a Supabase session. The webhook
 delivery token and event correlation; the cron worker uses `CRON_SECRET`; health is public
 and returns no secrets. JSON mutation requests are limited to 32 KB, phone numbers must be
 strict E.164, schemas must use CALL-E's supported subset, and unknown request fields are
-rejected. There is intentionally no automatic retry: the stable, content-bound idempotency
-key is reused for the single SDK submission.
+rejected. Infrastructure delivery may be retried, but a database checkpoint prevents that
+redelivery from repeating a CALL-E create. Any uncertain provider submission stops the
+campaign for manual reconciliation.
 
 ### Enabling a controlled live test
 

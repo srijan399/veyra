@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { asc, eq } from "drizzle-orm";
 
+import { assertLiveOperatorUser } from "@/lib/auth/live-access";
 import { getCallMode } from "@/lib/calle/client";
 import { dispatchPreparedCampaign } from "@/lib/campaigns/dispatch";
 import { compileAndPrepareCampaign } from "@/lib/campaigns/server";
@@ -94,6 +95,7 @@ export async function GET(request: Request) {
       }
 
       const mode = getCallMode();
+      await assertLiveOperatorUser(item.userId, mode);
       const { prepared } = await compileAndPrepareCampaign({
         userId: item.userId,
         campaignId: item.id,
@@ -116,14 +118,11 @@ export async function GET(request: Request) {
       });
       if (dispatch.status === "submitted") submitted += 1;
       else skipped += 1;
-    } catch (error) {
+    } catch {
       failed += 1;
       await failScheduledCampaign({
         campaignId: item.id,
-        message:
-          error instanceof Error
-            ? `Scheduled dispatch stopped safely: ${error.message}`
-            : "Scheduled dispatch stopped safely",
+        message: "Scheduled dispatch stopped safely before calling.",
       });
     }
   }

@@ -10,8 +10,9 @@
  * kept awake by an external uptime pinger hitting that endpoint every few minutes so
  * Render's 15-minutes-idle sleep never triggers. Because a free-tier instance can still
  * restart or drop its connection between pings, the AMQP connection reconnects
- * automatically with backoff — messages left unacked by a dropped connection are
- * requeued by RabbitMQ itself and are safe to reprocess (see the ack comment below).
+ * automatically with backoff. Messages left unacked by a dropped connection are requeued;
+ * the database claim/checkpoint decides whether to process, skip, defer, or quarantine
+ * each delivery before CALL-E can be invoked again.
  */
 import { config } from "dotenv";
 config({ path: ".env.local", quiet: true });
@@ -22,7 +23,8 @@ import amqp, { type ChannelModel } from "amqplib";
 import { isCallDispatchJob, processCallDispatchJob } from "@/lib/campaigns/dispatch";
 import { CALL_DISPATCH_QUEUE } from "@/lib/queue/rabbitmq";
 
-const PREFETCH = 5;
+const PREFETCH = 1;
+const DEFER_DELAY_MS = 1_000;
 const RECONNECT_BASE_DELAY_MS = 2_000;
 const RECONNECT_MAX_DELAY_MS = 30_000;
 const PORT = Number(process.env.PORT ?? 8091);
@@ -68,29 +70,47 @@ async function runOnce(): Promise<void> {
   await channel.consume(CALL_DISPATCH_QUEUE, (msg) => {
     if (!msg) return;
     void (async () => {
+      let parsed: unknown;
       try {
-        const parsed: unknown = JSON.parse(msg.content.toString("utf8"));
-        if (!isCallDispatchJob(parsed)) {
-          console.error("[dispatch-worker] discarding malformed message (not a CallDispatchJob):", parsed);
-        } else {
-          await processCallDispatchJob(parsed);
-        }
-      } catch (error) {
-        // processCallDispatchJob already records failures it can attribute to a call
-        // (recordSubmissionFailure); this only catches unparseable JSON, which has no
-        // call to attribute the failure to. Acked either way — see below.
-        console.error("[dispatch-worker] failed to process message", error);
-      } finally {
-        // Always ack: recordSubmissionFailure already turned a failed call into a
-        // terminal, visible "submission_uncertain" state, so redelivering it would just
-        // reprocess a call CALL-E's idempotency key already protects against duplicating.
-        // (A message never reaching this ack because the connection itself dropped mid-
-        // processing is the one case RabbitMQ requeues automatically — also safe, for
-        // the same idempotency-key reason.)
+        parsed = JSON.parse(msg.content.toString("utf8"));
+      } catch {
+        console.error("[dispatch-worker] discarding invalid JSON message; payload omitted");
         try {
           channel.ack(msg);
         } catch {
-          // Channel already closed underneath us (connection dropped) — nothing to ack.
+          // Channel already closed.
+        }
+        return;
+      }
+      if (!isCallDispatchJob(parsed)) {
+        console.error("[dispatch-worker] discarding malformed message (not a CallDispatchJob)");
+        try {
+          channel.ack(msg);
+        } catch {
+          // Channel already closed.
+        }
+        return;
+      }
+
+      try {
+        const outcome = await processCallDispatchJob(parsed);
+        if (outcome === "deferred") {
+          setTimeout(() => {
+            try {
+              channel.nack(msg, false, true);
+            } catch {
+              // A closed channel automatically requeues an unacked delivery.
+            }
+          }, DEFER_DELAY_MS);
+          return;
+        }
+        channel.ack(msg);
+      } catch {
+        console.error("[dispatch-worker] infrastructure failure; requeueing without payload details");
+        try {
+          channel.nack(msg, false, true);
+        } catch {
+          // A closed channel automatically requeues an unacked delivery.
         }
       }
     })();
@@ -100,8 +120,8 @@ async function runOnce(): Promise<void> {
   // a clean shutdown, a network drop, or Render restarting the instance.
   await new Promise<void>((resolve) => {
     connection.on("close", () => resolve());
-    connection.on("error", (error) => {
-      setStatus({ lastError: error instanceof Error ? error.message : String(error) });
+    connection.on("error", () => {
+      setStatus({ lastError: "RabbitMQ connection error" });
     });
   });
   activeConnection = null;
@@ -115,10 +135,13 @@ async function consumeForever(): Promise<void> {
       if (shuttingDown) break;
       console.warn("[dispatch-worker] connection closed, reconnecting…");
       setStatus({ connected: false });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("[dispatch-worker] connection attempt failed:", message);
-      setStatus({ connected: false, lastError: message, consecutiveFailures: status.consecutiveFailures + 1 });
+    } catch {
+      console.error("[dispatch-worker] connection attempt failed; details omitted");
+      setStatus({
+        connected: false,
+        lastError: "RabbitMQ connection attempt failed",
+        consecutiveFailures: status.consecutiveFailures + 1,
+      });
     }
     if (shuttingDown) break;
 
@@ -157,7 +180,7 @@ async function main(): Promise<void> {
   await consumeForever();
 }
 
-main().catch((error: unknown) => {
-  console.error("[dispatch-worker] fatal error", error);
+main().catch(() => {
+  console.error("[dispatch-worker] fatal error; details omitted");
   process.exitCode = 1;
 });

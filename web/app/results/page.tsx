@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import StepHeader from "@/components/StepHeader";
+import { assertResultsOperatorRole } from "@/lib/auth/live-policy";
 import { listUserCampaigns } from "@/lib/db/campaigns-list";
 import { getSessionUser } from "@/lib/supabase/auth";
 
@@ -20,6 +21,11 @@ function formatCreated(date: Date | null): string {
 export default async function ResultsListPage() {
   const user = await getSessionUser();
   if (!user) redirect("/auth/login?next=/results");
+  try {
+    assertResultsOperatorRole(user.role);
+  } catch {
+    redirect("/campaigns");
+  }
 
   const rows = await listUserCampaigns(user.id);
 

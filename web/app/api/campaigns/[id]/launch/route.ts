@@ -3,6 +3,8 @@ import { timingSafeEqual } from "node:crypto";
 import { asc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
+import { assertLiveOperatorUser } from "@/lib/auth/live-access";
+import { LiveAccessError } from "@/lib/auth/live-policy";
 import {
   assertApprovedCallReady,
   getCallMode,
@@ -93,6 +95,7 @@ export async function POST(request: Request, context: Params) {
     }
 
     const mode = getCallMode();
+    await assertLiveOperatorUser(auth.user.id, mode);
     const { prepared } = await compileAndPrepareCampaign({
       userId: auth.user.id,
       campaignId: id,
@@ -178,6 +181,9 @@ export async function POST(request: Request, context: Params) {
     }
     if (error instanceof CallConfigurationError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    if (error instanceof LiveAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
     }
     if (error instanceof EngineError) {
       return NextResponse.json(

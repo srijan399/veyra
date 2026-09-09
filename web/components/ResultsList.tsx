@@ -9,7 +9,7 @@ const KICKER = 'text-[10.5px] uppercase tracking-[.14em] text-bone/50';
 const RULE = 'border-t-2 border-bone/[.26]';
 
 function terminal(status: CampaignStatus): boolean {
-  return status === 'completed' || status === 'failed';
+  return status === 'completed' || status === 'failed' || status === 'reconciliation_required';
 }
 
 interface ResultsListProps {
@@ -82,7 +82,7 @@ export default function ResultsList({
           {campaignName}
         </h1>
 
-        {failureMessage && status === 'failed' ? (
+        {failureMessage && (status === 'failed' || status === 'reconciliation_required') ? (
           <div
             role="alert"
             className="mb-6 border border-red-400/50 bg-red-950/30 p-3 text-sm text-red-200"
@@ -96,7 +96,9 @@ export default function ResultsList({
             <div>
               <div className={`${KICKER} mb-2`}>Call results</div>
               <p className="text-[13px] text-bone/55">
-                {terminal(status)
+                {status === 'reconciliation_required'
+                  ? 'Calling is paused. Reconcile the uncertain submission in CALL-E before taking further action.'
+                  : terminal(status)
                   ? 'Every call reached a recorded terminal state.'
                   : status === 'scheduled'
                     ? `Scheduled for ${

@@ -1,18 +1,31 @@
 import "server-only";
 
+import { assertLiveOperatorUser } from "@/lib/auth/live-access";
+import { LiveAccessError } from "@/lib/auth/live-policy";
 import { assertApprovedCallReady, CallConfigurationError, executeApprovedCall } from "@/lib/calle/client";
+import { createCallPreview, type SafeCallPreview } from "@/lib/calle/safety";
 import type { PreparedCampaignCall, PreparedCampaignLaunch } from "@/lib/campaigns/lifecycle";
 import {
+  claimCallDispatch,
+  pauseCampaignForReconciliation,
   recordCallSubmission,
+  recordPreSubmissionFailure,
   recordSubmissionFailure,
   reserveCampaignRuns,
 } from "@/lib/db/call-lifecycle";
 import { publishCallDispatch } from "@/lib/queue/rabbitmq";
 
 export interface CallDispatchJob {
+  userId: string;
   campaignId: string;
   call: PreparedCampaignCall;
 }
+
+export type CallDispatchOutcome =
+  | "processed"
+  | "deferred"
+  | "skipped"
+  | "reconciliation_required";
 
 /**
  * Guards processCallDispatchJob against a message that isn't actually a CallDispatchJob
@@ -25,6 +38,7 @@ export interface CallDispatchJob {
 export function isCallDispatchJob(value: unknown): value is CallDispatchJob {
   if (typeof value !== "object" || value === null) return false;
   const job = value as Record<string, unknown>;
+  if (typeof job.userId !== "string") return false;
   if (typeof job.campaignId !== "string") return false;
   if (typeof job.call !== "object" || job.call === null) return false;
   const call = job.call as Record<string, unknown>;
@@ -45,6 +59,7 @@ export async function dispatchPreparedCampaign(params: {
   prepared: PreparedCampaignLaunch;
   fromStatus?: "compiled" | "scheduled";
 }): Promise<{ status: "submitted" | "already_launched" }> {
+  await assertLiveOperatorUser(params.userId, params.prepared.preview.mode);
   for (const call of params.prepared.calls) {
     assertApprovedCallReady(call.draft, call.preview);
   }
@@ -62,12 +77,34 @@ export async function dispatchPreparedCampaign(params: {
   // Fake mode completes locally so a safe demo needs neither RabbitMQ nor a worker. Live
   // execution stays off the request path — one queued job per call, picked up by the
   // standalone worker in scripts/dispatch-worker.ts.
-  for (const call of params.prepared.calls) {
-    const job = { campaignId: params.campaignId, call } satisfies CallDispatchJob;
-    if (params.prepared.preview.mode === "fake") {
-      await processCallDispatchJob(job);
-    } else {
-      await publishCallDispatch(job);
+  if (params.prepared.preview.mode === "fake") {
+    for (const call of params.prepared.calls) {
+      await processCallDispatchJob({
+        userId: params.userId,
+        campaignId: params.campaignId,
+        call,
+      });
+    }
+  } else {
+    try {
+      for (const call of params.prepared.calls) {
+        const job = {
+          userId: params.userId,
+          campaignId: params.campaignId,
+          call,
+        } satisfies CallDispatchJob;
+        await publishCallDispatch(job);
+      }
+    } catch {
+      // A confirm-channel failure cannot prove whether the broker accepted the job.
+      // Quarantine the batch so already-published work cannot continue unnoticed.
+      await pauseCampaignForReconciliation({
+        userId: params.userId,
+        campaignId: params.campaignId,
+      });
+      throw new CallConfigurationError(
+        "Campaign dispatch was paused because queue delivery could not be confirmed",
+      );
     }
   }
 
@@ -79,22 +116,62 @@ export async function dispatchPreparedCampaign(params: {
  * per consumed message — this is the same body that used to run inline in the dispatch
  * loop above before dispatch moved to a queue, unchanged in behavior.
  */
-export async function processCallDispatchJob(job: CallDispatchJob): Promise<void> {
-  const { campaignId, call } = job;
+export async function processCallDispatchJob(job: CallDispatchJob): Promise<CallDispatchOutcome> {
+  const { userId, campaignId, call } = job;
+  let verifiedPreview: SafeCallPreview;
+
   try {
-    const execution = await executeApprovedCall(call.draft, call.preview);
-    await recordCallSubmission({ campaignId, callResultId: call.callResultId, execution });
+    await assertLiveOperatorUser(userId, call.preview.mode);
+    verifiedPreview = await createCallPreview(userId, call.draft, call.preview.mode);
+    if (
+      verifiedPreview.approvalDigest !== call.preview.approvalDigest ||
+      verifiedPreview.idempotencyKey !== call.preview.idempotencyKey
+    ) {
+      throw new CallConfigurationError("Queued call approval does not match its contents");
+    }
+    assertApprovedCallReady(call.draft, verifiedPreview);
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    console.error(
-      `[dispatch] call submission failed (campaignId=${campaignId} callResultId=${call.callResultId}):`,
-      error,
-    );
-    await recordSubmissionFailure({
+    if (!(error instanceof LiveAccessError) && !(error instanceof CallConfigurationError)) {
+      throw error;
+    }
+    await recordPreSubmissionFailure({
       campaignId,
       callResultId: call.callResultId,
-      reason,
-      code: error instanceof CallConfigurationError ? "configuration_error" : "submission_error",
+      code: error instanceof LiveAccessError ? "authorization_error" : "configuration_error",
     });
+    return "processed";
+  }
+
+  const claim = await claimCallDispatch({
+    userId,
+    campaignId,
+    callResultId: call.callResultId,
+    contactId: call.contact.id,
+    approvalDigest: verifiedPreview.approvalDigest,
+    idempotencyKey: verifiedPreview.idempotencyKey,
+  });
+  if (claim === "defer") return "deferred";
+  if (claim === "require_reconciliation") return "reconciliation_required";
+  if (claim === "skip") return "skipped";
+
+  try {
+    const execution = await executeApprovedCall(call.draft, verifiedPreview);
+    await recordCallSubmission({ campaignId, callResultId: call.callResultId, execution });
+    return "processed";
+  } catch {
+    console.error(
+      `[dispatch] call submission failed campaignId=${campaignId} ` +
+        `callResultId=${call.callResultId} category=provider_submission`,
+    );
+    if (call.preview.mode === "fake") {
+      await recordPreSubmissionFailure({
+        campaignId,
+        callResultId: call.callResultId,
+        code: "configuration_error",
+      });
+      return "processed";
+    }
+    await recordSubmissionFailure({ campaignId, callResultId: call.callResultId });
+    return "reconciliation_required";
   }
 }

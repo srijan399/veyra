@@ -1,10 +1,11 @@
+import { resolveEngineUrl } from "@/lib/engine-origin";
+
 export const runtime = "nodejs";
 
 export async function GET() {
-  const rawEngineUrl = process.env.ENGINE_URL ?? "http://localhost:8008";
   let engineUrl: URL;
   try {
-    engineUrl = new URL("/health", rawEngineUrl);
+    engineUrl = new URL("/health", resolveEngineUrl());
   } catch {
     return Response.json(
       { status: "degraded", web: "ok", engine: "misconfigured" },

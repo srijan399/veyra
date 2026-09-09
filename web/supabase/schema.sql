@@ -309,7 +309,8 @@ create policy "call_results_select_own_campaign" on public.call_results
 -- above requires an authenticated user anyway.
 
 grant usage on schema public to authenticated;
-grant select, insert, update         on public.profiles     to authenticated;
+grant select                         on public.profiles     to authenticated;
+grant update (full_name, company_name, avatar_path) on public.profiles to authenticated;
 grant select, insert, update, delete on public.workflows    to authenticated;
 grant select, insert, update, delete on public.campaigns    to authenticated;
 grant select, insert, update, delete on public.contacts     to authenticated;

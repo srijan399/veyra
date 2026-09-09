@@ -523,7 +523,7 @@ export default function CampaignBuilder({
                   setCsv(event.target.value);
                   setCsvFeedback(null);
                 }}
-                placeholder={"Name,Phone\nCALL-E Test Hotline,+14155550100"}
+                placeholder={"Name,Phone\nMarta Reyes,+14155550100"}
                 className="min-h-[170px] w-full resize-y border border-bone/[.26] bg-panel p-3.5 font-mono text-[13px] leading-[1.7] text-bone outline-none placeholder:text-bone/25"
               />
               <div className="mt-3 flex items-center gap-3.5">
@@ -667,19 +667,23 @@ export default function CampaignBuilder({
           <div className={`mt-10 pt-6 ${RULE}`}>
             <div className={`${KICKER} mb-3`}>03 · This campaign is locked</div>
             <p className="mb-4 max-w-[700px] text-[13px] leading-6 text-bone/55">
-              {campaignStatus === 'failed'
+              {campaignStatus === 'reconciliation_required'
+                ? 'Calling is paused because a submission may have reached CALL-E. Do not re-run this campaign until the provider outcome has been reconciled.'
+                : campaignStatus === 'failed'
                 ? "This campaign didn't complete. Re-run it to try the same workflow and contacts again."
                 : 'This campaign has already been submitted and can no longer be edited or launched again. Re-run it to start a fresh copy with the same workflow and contacts.'}
             </p>
             <div className="flex flex-wrap items-center gap-3.5">
-              <button
-                type="button"
-                onClick={rerunCampaign}
-                disabled={rerunning}
-                className="inline-flex cursor-pointer items-center gap-2.5 border-0 bg-flame px-5 py-[13px] text-sm font-extrabold text-ink disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {rerunning ? 'Setting up a new campaign…' : 'Re-run campaign'}
-              </button>
+              {campaignStatus !== 'reconciliation_required' ? (
+                <button
+                  type="button"
+                  onClick={rerunCampaign}
+                  disabled={rerunning}
+                  className="inline-flex cursor-pointer items-center gap-2.5 border-0 bg-flame px-5 py-[13px] text-sm font-extrabold text-ink disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {rerunning ? 'Setting up a new campaign…' : 'Re-run campaign'}
+                </button>
+              ) : null}
               <a
                 href={`/results/${campaignId}`}
                 className="text-[12px] font-extrabold text-bone/70 underline decoration-bone/25 underline-offset-4"
@@ -699,7 +703,8 @@ export default function CampaignBuilder({
           </div>
         ) : null}
 
-        {initialFailureMessage && campaignStatus === 'failed' ? (
+        {initialFailureMessage &&
+        (campaignStatus === 'failed' || campaignStatus === 'reconciliation_required') ? (
           <div
             role="alert"
             className="mt-5 border border-red-400/50 bg-red-950/30 p-3 text-sm text-red-200"
