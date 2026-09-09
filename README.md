@@ -10,11 +10,11 @@
 
 Describe an outbound calling process in plain English and voila, Veyra turns it into an editable, reusable phone workflow, and CALL-E executes it through real conversations.
 
-Link to our PR: [PR](#) <br/>
+Link to our PR: [PR](https://github.com/CALLE-AI/awesome-phone-call-agents/pull/397) <br/>
 Link to webapp: [Website](https://veyra-workflow.vercel.app)
 
 **Check out:** <br />
-[Youtube Demo](#) · [Architecture walkthrough](#) · [Github](https://github.com/srijan399/veyra) · [Devpost submission](#)
+[Youtube Demo](https://youtu.be/qgQpxPjqvJQ) · [Github](https://github.com/srijan399/veyra) · [Devpost submission](https://devpost.com/software/veyra-urti3k)
 
 **Built with:** CALL-E · Next.js 16 · TypeScript · FastAPI · Gemini · Supabase · RabbitMQ · Drizzle ORM · Tailwind CSS · React 19
 
