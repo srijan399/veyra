@@ -51,7 +51,7 @@ Industry agnostic sales and operations teams that run repetitive outbound campai
 
 ## Setup
 
-Veyra consists of a **Next.js web application**, **a stateless FastAPI workflow engine**, **Supabase**, **RabbitMQ**, and a long-running call-dispatch worker. The worker is required for both fake and live campaigns - without it, calls remain queued.
+Veyra consists of a **Next.js web application**, **a stateless FastAPI workflow engine**, **Supabase**, **RabbitMQ**, and a long-running call-dispatch worker. Fake campaigns complete inside the web application without RabbitMQ. Live campaigns are queued, so their calls require the worker.
 
 ### Prerequisites
 
@@ -59,7 +59,7 @@ Veyra consists of a **Next.js web application**, **a stateless FastAPI workflow 
 - Python 3.11 or newer
 - A Supabase project
 - A Gemini API key for workflow generation and natural-language editing
-- A local or hosted RabbitMQ broker
+- A local or hosted RabbitMQ broker for live call dispatch
 - Optional: CALL-E credentials, required only when placing a real call
 
 Install the web and engine dependencies together from the repository root:
@@ -142,7 +142,7 @@ pnpm dev
 
 The web app is available at `http://localhost:3000`, and `GET /api/health` checks that it can reach the engine.
 
-### 3. Start the dispatch worker
+### 3. Start the dispatch worker for live calls
 
 Open a third terminal and run:
 
@@ -151,7 +151,7 @@ cd web
 pnpm worker
 ```
 
-The worker consumes `veyra.call-dispatch` jobs from RabbitMQ and performs fake or live CALL-E submissions outside the web request. Keep it running while testing campaign launches.
+The worker consumes `veyra.call-dispatch` jobs from RabbitMQ and performs live CALL-E submissions outside the web request. It is not required in fake mode. Keep it running whenever live campaign launches should be processed.
 
 ### 4. Test safely in fake mode
 
@@ -159,7 +159,7 @@ Keep `CALL_MODE=fake` and `CALLE_LIVE_ENABLED=false`.
 
 Create an account, generate and edit a workflow, compile a campaign, add contacts manually or from a CSV containing `Name` and `Phone` columns, preview the campaign, approve it, and launch it.
 
-The worker will produce simulated results without contacting CALL-E or consuming call credits.
+The web application will produce simulated results without contacting CALL-E, RabbitMQ, or consuming call credits.
 
 You can also verify the execution boundary without credentials:
 
@@ -187,6 +187,16 @@ CALLE_WEBHOOK_TOKEN=<at-least-32-random-characters>
 `APP_URL` is the public frontend URL because CALL-E posts results to `<APP_URL>/api/calle/webhook`.
 
 Preview the exact campaign and confirm recipient permission before launching. Veyra does not automatically retry an uncertain submission.
+
+### Safety and stopping calls
+
+- Fake mode is the default and cannot place a real call, even when a CALL-E key is present.
+- Every live recipient must use E.164 format and be explicitly authorized as part of the exact campaign preview. Logs and previews mask phone numbers.
+- A campaign can be claimed for launch only once, and every call carries a stable idempotency key. Duplicate contacts are rejected except for the explicitly labelled CALL-E testing-hotline fixture.
+- Launching a live campaign queues real-world side effects: recipients may be called and CALL-E credits may be consumed. Veyra cannot cancel a call after the worker submits it.
+- To stop future live submissions, stop the dispatch worker and set `CALL_MODE=fake` and `CALLE_LIVE_ENABLED=false` before restarting it. Stopping the worker pauses queued jobs; it does not delete them.
+- Disable `CAMPAIGN_SCHEDULING_ENABLED` to stop scheduled campaigns from becoming newly due. Veyra never creates hidden recurring schedules and never automatically retries an uncertain provider submission.
+- Generated medical, legal, financial, or emergency workflows require operator review. They must not diagnose, provide professional advice, replace emergency services, or make commitments outside the approved task.
 
 **Scheduled campaigns** additionally require `CAMPAIGN_SCHEDULING_ENABLED=true`, a `CRON_SECRET` of at least 16 characters, and a frequent scheduler calling `GET /api/cron/campaigns`.
 

@@ -8,7 +8,7 @@ compilation** of the `Workflow` graph described in `web/types/workflow.ts` and
 It deliberately does **not** own:
 
 - Dispatching calls to CALL-E, or holding `CALLE_API_KEY` — that stays in
-  `web/lib/calle-client.ts` / `web/app/api/campaigns/[id]/launch/route.ts` in the Next.js app.
+  `web/lib/calle/client.ts` and `web/scripts/dispatch-worker.ts` in the Next.js app.
 - Persistence — no database, no Supabase client. Every endpoint is a pure function of
   its request body; nothing here survives a restart. Whoever calls the engine (the
   Next.js routes under `web/app/api/workflows/`) is responsible for saving the result.
@@ -127,7 +127,8 @@ The Next.js app lives in `web/` (a sibling of this directory) — see its own pa
 relative to `web/`, not to this README's location.
 
 - `web/lib/engine-client.ts` — the only file allowed to call this service; every other
-  file goes through it, same rule `web/lib/calle-client.ts` follows for CALL-E.
+  file goes through it, following the same boundary `web/lib/calle/client.ts` provides
+  for CALL-E.
 - `web/app/api/workflows/generate/route.ts` — `requireUser()`, calls `/workflows/generate`,
   saves the result to `public.workflows` with `user_id: user.id`.
 - `web/app/api/workflows/[id]/route.ts` — `GET` loads a saved workflow (RLS-scoped),
@@ -137,9 +138,9 @@ relative to `web/`, not to this README's location.
 - `web/app/api/workflows/[id]/compile/route.ts` — saves and compiles the edited workflow,
   then creates the owned Phase 2 campaign/contact records.
 - `web/app/api/campaigns/[id]/compile/route.ts` — recompiles the persisted workflow for
-  the campaign's current first contact before CALL-E preview approval.
+  the campaign's contacts before CALL-E preview approval.
 
-Phase 3 in the web application now compiles up to ten contacts independently in fake mode,
-reserves durable call-result records, launches each approved call once, and captures
-terminal CALL-E webhook results. Controlled live mode remains limited to one authorized
-test recipient. The engine itself stays stateless and credential-free throughout.
+The web application compiles up to ten contacts independently, reserves durable
+call-result records, queues each approved call once, and captures terminal CALL-E webhook
+results. Live mode requires every recipient to be explicitly authorized during preview.
+The engine itself stays stateless and credential-free throughout.

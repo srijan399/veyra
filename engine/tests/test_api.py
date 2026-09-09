@@ -50,7 +50,7 @@ def test_compile_sample_workflow():
         json={
             "workflow": SAMPLE_WORKFLOW.model_dump(by_alias=True),
             "campaign_id": "campaign-1",
-            "contact": {"id": "c1", "name": "Jordan Lee", "phoneNumber": "+1 415 555 0167"},
+            "contact": {"id": "c1", "name": "Jordan Lee", "phoneNumber": "+14155550100"},
             "webhook_url": "https://example.com/api/calle/webhook",
         },
     )

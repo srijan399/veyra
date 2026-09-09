@@ -30,7 +30,7 @@ personalized CALL-E task plus result schema. Veyra then saves the exact workflow
 campaign, first contact, and compiled request in one RLS-protected transaction.
 
 The campaign page loads the persisted campaign instead of fixed task/schema fixtures.
-Before every preview it recompiles and saves the current campaign name and first contact,
+Before every preview it recompiles and saves the current campaign name and contacts,
 validates the engine output again in Next.js, and only then enters Phase 1 approval.
 
 Run the engine and web application in separate terminals:
@@ -81,7 +81,7 @@ approval digest, and sent as `recipient.locale`. Changing it invalidates approva
 
 An optional start time can be approved up to seven days ahead. Scheduled campaigns are
 locked, recomputed at dispatch, and submitted only if their stored approval digest, call
-mode, compiler output, live recipient, and live safety window still match. The secured
+mode, compiler output, and recipient authorization still match. The secured
 `GET /api/cron/campaigns` worker requires `Authorization: Bearer $CRON_SECRET`; it never
 automatically retries uncertain provider submissions.
 
@@ -141,7 +141,7 @@ pnpm db:migrate
   campaign history, while refusing deletion if a campaign is scheduled or active.
 - `POST /api/workflows/[id]/compile` validates/saves the edited workflow and creates an
   owned compiled campaign with one fictional reserved contact.
-- `POST /api/campaigns/[id]/compile` recompiles and persists the current first contact.
+- `POST /api/campaigns/[id]/compile` recompiles and persists the campaign's contacts.
 - `POST /api/campaigns/[id]/preview` validates, saves, and compiles 1–10 contacts and
   returns one batch approval preview.
 - `POST /api/campaigns/[id]/launch` recompiles the saved campaign, verifies the exact
